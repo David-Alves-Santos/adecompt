@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="pt-BR" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reserva de Computadores</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lucide@0.263.0/dist/umd/lucide.min.js"></script>
+    <script src="/_sdk/element_sdk.js"></script>
+    <script src="/_sdk/data_sdk.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+</head>
+<body class="h-full bg-slate-950 text-slate-100">
+    <div id="app" class="h-full w-full overflow-auto">
+        <!-- LOGIN SCREEN -->
+        <div id="login-screen" class="h-full w-full flex items-center justify-center p-4" style="background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#0f172a 100%)">
+            <div class="w-full max-w-md fade-in">
+                <div class="text-center mb-8">
+                    <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-blue-600 mb-4">
+                        <i data-lucide="monitor" style="width:32px;height:32px;color:white"></i>
+                    </div>
+                    <h1 id="login-title" class="text-4xl font-bold text-white mb-2">ADECOMPT</h1>
+                    <p id="login-school" class="text-slate-400 mt-1">ADECOMPUT</p>
+                </div>
+                <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-300 mb-1">E-mail</label>
+                        <input id="login-email" type="email" placeholder="seu@email.com" class="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-300 mb-1">Senha</label>
+                        <div class="relative">
+                            <input id="login-pass" type="password" placeholder="••••••••" class="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500">
+                            <button type="button" onclick="togglePasswordVisibility()" class="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-slate-200 transition" style="background:none;border:none;cursor:pointer;padding:0">
+                                <i id="pass-eye-icon" data-lucide="eye" style="width:18px;height:18px"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="login-error" class="text-red-400 text-sm hidden"></div>
+                    <button id="login-btn" onclick="handleLogin()" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition">Entrar</button>
+                    <p class="text-center text-slate-500 text-xs mt-2">Primeiro acesso? Cadastre-se pelo administrador</p>
+                </div>
+            </div>
+        </div>
+        <!-- MAIN APP -->
+        <div id="main-app" class="h-full w-full hidden" style="display:none">
+            <div class="flex h-full">
+                <!-- SIDEBAR -->
+                <aside id="sidebar" class="w-60 bg-slate-900 border-r border-slate-800 flex flex-col flex-shrink-0">
+                    <div class="p-4 border-b border-slate-800">
+                        <div class="flex items-center gap-2">
+                            <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
+                                <i data-lucide="monitor" style="width:16px;height:16px;color:white"></i>
+                            </div>
+                            <span id="sidebar-title" class="font-bold text-sm text-white">Reservas</span>
+                        </div>
+                    </div>
+                    <nav class="flex-1 p-2 space-y-1" id="nav-links"></nav>
+                    <div class="p-3 border-t border-slate-800">
+                        <div class="flex items-center gap-2 mb-2">
+                            <div class="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center">
+                                <i data-lucide="user" style="width:14px;height:14px;color:#94a3b8"></i>
+                            </div>
+                            <div class="truncate">
+                                <p id="user-name" class="text-xs font-medium text-white truncate"></p>
+                                <p id="user-role" class="text-xs text-slate-500"></p>
+                            </div>
+                        </div>
+                        <button onclick="logout()" class="w-full py-2 text-xs text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition flex items-center justify-center gap-1">
+                            <i data-lucide="log-out" style="width:12px;height:12px"></i> Sair
+                        </button>
+                    </div>
+                </aside>
+                <!-- CONTENT -->
+                <main class="flex-1 overflow-auto p-6" id="main-content"></main>
+            </div>
+        </div>
+        <!-- MOBILE MENU BUTTON -->
+        <button id="mobile-menu-btn" onclick="toggleSidebar()" class="fixed top-3 left-3 z-50 p-2 bg-slate-800 rounded-lg hidden">
+            <i data-lucide="menu" style="width:20px;height:20px;color:white"></i>
+        </button>
+    </div>
+    <div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+    <script src="js/script.js"></script>
+</body>
+</html>

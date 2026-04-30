@@ -1,0 +1,19 @@
+*{font-family:'DM Sans',sans-serif}
+html,body{height:100%;margin:0}
+.device-card{transition:all .25s ease}
+.device-card:hover{transform:translateY(-2px)}
+.fade-in{animation:fadeIn .3s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.4}}
+.pulse-dot{animation:pulse-dot 1.5s infinite}
+.toast{animation:toastIn .3s ease,toastOut .3s ease 2.7s forwards}
+@keyframes toastIn{from{opacity:0;transform:translateY(-20px)}to{opacity:1;transform:translateY(0)}}
+@keyframes toastOut{from{opacity:1}to{opacity:0}}
+.sidebar-link{transition:all .15s ease}
+.sidebar-link:hover{background:rgba(255,255,255,.1)}
+.sidebar-link.active{background:rgba(255,255,255,.15);border-left:3px solid #60a5fa}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}
+.stat-card{background:linear-gradient(135deg,rgba(255,255,255,.05),rgba(255,255,255,.02));backdrop-filter:blur(10px)}
+input:focus,select:focus{outline:none;box-shadow:0 0 0 2px #3b82f6}
+body { box-sizing: border-box; }
