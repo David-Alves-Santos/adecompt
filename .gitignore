@@ -4,3 +4,7 @@ data.json
 data.json.tmp
 server.log
 server.err
+# Environment variables (local overrides)
+.env
+# Supabase local config
+.supabase/

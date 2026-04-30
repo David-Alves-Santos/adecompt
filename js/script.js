@@ -5,6 +5,58 @@ let currentView = 'reservar';
 let isLoading = false;
 let isFormOpen = false;
 
+// ========== SUPABASE AUTH ==========
+/** Check if Supabase mode is active (dataSdk using Supabase vs Express API) */
+function isSupabaseMode() {
+  return typeof getSupabaseClient === 'function' && getSupabaseClient() !== null;
+}
+
+/**
+ * Attempt to restore an existing Supabase session on page load.
+ * Returns true if a valid session was found and currentUser was set.
+ */
+async function tryRestoreSupabaseSession() {
+  if (!isSupabaseMode()) return false;
+  try {
+    const supabase = getSupabaseClient();
+    const { data: { session }, error } = await supabase.auth.getSession();
+    if (error || !session) return false;
+
+    // Fetch user profile from profiles table
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', session.user.id)
+      .single();
+
+    if (profile) {
+      currentUser = {
+        name: profile.name,
+        email: profile.email,
+        role: profile.role,
+        __backendId: profile.id
+      };
+      // Sync profile into allData if not already there
+      const existing = allData.find(d => d.__backendId === profile.id && d.type === 'user');
+      if (!existing) {
+        allData.push({
+          ...profile,
+          __backendId: profile.id,
+          type: 'user',
+          password: '',
+          cart_name: '', floor: '', device_type: '', device_number: 0,
+          reserved_by: '', reserved_email: '', date: '', period: '', status: '',
+          device_brand: '', device_serial: '', cart_id: ''
+        });
+      }
+      return true;
+    }
+  } catch (e) {
+    console.warn('Supabase session restore failed:', e.message);
+  }
+  return false;
+}
+
 
 let PERIODS = [
   '1º Horário (07:00-07:50)',
@@ -139,7 +191,7 @@ Acesse o app para gerenciar suas reservas!
 }
 
 
-// ========== SESSÃO PERSISTENTE (localStorage) ==========
+// ========== SESSÃO PERSISTENTE ==========
 function saveSession() {
   if (currentUser) {
     localStorage.setItem('adelaide_session', JSON.stringify(currentUser));
@@ -169,12 +221,23 @@ function loadSession() {
 
 function clearSession() {
   localStorage.removeItem('adelaide_session');
+  // Also sign out from Supabase if in supabase mode
+  if (isSupabaseMode()) {
+    const supabase = getSupabaseClient();
+    supabase.auth.signOut().catch(() => {});
+  }
 }
 
 
 async function initApp() {
   const r = await window.dataSdk.init(dataHandler);
   if (!r.isOk) { console.error('SDK init failed'); }
+  
+  // Try to restore Supabase session after data is loaded
+  const supabaseSession = await tryRestoreSupabaseSession();
+  if (supabaseSession) {
+    showMainApp();
+  }
   
   // Check expiring reservations every 30 seconds
   setInterval(checkExpiringReservations, 30000);
@@ -237,7 +300,7 @@ function togglePasswordVisibility() {
 }
 
 
-function handleLogin() {
+async function handleLogin() {
   const email = document.getElementById('login-email').value.trim().toLowerCase();
   const pass = document.getElementById('login-pass').value;
   const errEl = document.getElementById('login-error');
@@ -245,6 +308,49 @@ function handleLogin() {
 
   if (!email || !pass) { errEl.textContent='Preencha todos os campos'; errEl.classList.remove('hidden'); return; }
 
+  // --- SUPABASE AUTH (primary) ---
+  if (isSupabaseMode()) {
+    const supabase = getSupabaseClient();
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: email,
+      password: pass
+    });
+
+    if (authError) {
+      errEl.textContent = 'E-mail ou senha incorretos';
+      errEl.classList.remove('hidden');
+      console.error('Supabase auth error:', authError.message);
+      return;
+    }
+
+    // Fetch user profile
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', authData.user.id)
+      .single();
+
+    if (profileError || !profile) {
+      errEl.textContent = 'Erro ao carregar perfil do usuário.';
+      errEl.classList.remove('hidden');
+      console.error('Profile fetch error:', profileError?.message);
+      return;
+    }
+
+    // Check if user is inactive
+    if (profile.user_status === 'inativo') {
+      errEl.textContent = 'Este usuário foi desativado. Contate o administrador.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+
+    currentUser = { name: profile.name, email: profile.email, role: profile.role, __backendId: profile.id };
+    saveSession();
+    showMainApp();
+    return;
+  }
+
+  // --- LEGACY AUTH (Express API mode, fallback) ---
 
   // Default admin
   if (email === 'admin@escola.com' && pass === 'admin123') {
