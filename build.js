@@ -4,23 +4,24 @@
  * Gera o arquivo env.js na raiz do projeto a partir
  * de variáveis de ambiente configuradas no Cloudflare Pages.
  *
- * Variáveis esperadas (configurar no dashboard do Cloudflare Pages):
- *   SUPABASE_URL       - URL do projeto Supabase (ex: https://xxx.supabase.co)
- *   SUPABASE_ANON_KEY  - Chave anon public do Supabase
+ * Variáveis aceitas (por ordem de precedência):
+ *   1. SUPABASE_URL / SUPABASE_ANON_KEY
+ *   2. VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY (prefixo VITE_ compatível)
  *
  * Configuração no Cloudflare Pages:
  *   Build command:       node build.js
  *   Build output dir:    /
- *   Environment variables (adicionar em Settings > Environment variables):
- *     SUPABASE_URL       = https://ormtgxnlfrqybjjaneee.supabase.co
- *     SUPABASE_ANON_KEY  = eyJhbGciOiJIUzI1NiIs...
+ *   Environment variables (Settings > Environment variables):
+ *     VITE_SUPABASE_URL       = https://ormtgxnlfrqybjjaneee.supabase.co
+ *     VITE_SUPABASE_ANON_KEY  = eyJhbGciOiJIUzI1NiIs...
  */
 
 const fs = require('fs');
 const path = require('path');
 
-const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || '';
+// Aceita ambos os padrões de nomenclatura
+const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.error('⚠️  AVISO: Variáveis de ambiente SUPABASE_URL e/ou SUPABASE_ANON_KEY não definidas.');

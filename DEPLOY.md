@@ -193,11 +193,11 @@ git push -u origin feat/supabase-cloudflare-migration
 
    | Variable name | Value |
    |---|---|
-   | `SUPABASE_URL` | `https://ormtgxnlfrqybjjaneee.supabase.co` |
-   | `SUPABASE_ANON_KEY` | `eyJhbGciOiJIUzI1NiIs...` |
+   | `VITE_SUPABASE_URL` | `https://ormtgxnlfrqybjjaneee.supabase.co` |
+   | `VITE_SUPABASE_ANON_KEY` | `eyJhbGciOiJIUzI1NiIs...` |
 
-   > ℹ️ O nome das variáveis é `SUPABASE_URL` e `SUPABASE_ANON_KEY` (sem `VITE_`).
-   > O script [`build.js`](build.js) lê essas variáveis e gera o arquivo [`env.js`](env.js) automaticamente durante o deploy.
+   > ℹ️ O script [`build.js`](build.js) lê essas variáveis (com ou sem prefixo `VITE_`)
+   > e gera o arquivo [`env.js`](env.js) automaticamente durante o deploy.
 
 7. Clique em **"Save and Deploy"** 🚀
 
