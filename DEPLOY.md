@@ -119,20 +119,29 @@ where email = 'admin@escola.com';
 
 ## 🔹 Passo 7 — Configurar o Projeto
 
-Abra [`_sdk/supabase-client.js`](_sdk/supabase-client.js) no VS Code e substitua os placeholders:
+Agora as credenciais ficam em um arquivo separado [`env.js`](env.js) que **não** é enviado para o GitHub (está no `.gitignore`).
 
-```javascript
-const SUPABASE_CONFIG = {
-  url: 'https://ormtgxnlfrqybjjaneee.supabase.co',   // ← seu Project URL (SEM /rest/v1/)
-  anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...' // ← sua anon public key
-};
-```
+### Local (desenvolvimento)
+
+1. Copie o arquivo de exemplo:
+   ```
+   copie js/env.example.js como env.js (raiz do projeto)
+   ```
+2. Abra o [`env.js`](env.js) e preencha com suas credenciais:
+
+   ```javascript
+   window.ADECOMPT_CONFIG = {
+     supabaseUrl: 'https://ormtgxnlfrqybjjaneee.supabase.co',   // ← SEM /rest/v1/
+     supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...' // ← anon public key
+   };
+   ```
+
+3. ✅ Pronto! O [`env.js`](env.js) será carregado automaticamente pelo [`index.html`](index.html) antes do SDK.
 
 > ⚠️ **Importante:**
+> - **NUNCA** envie o `env.js` para o GitHub (já está no `.gitignore`)
 > - A URL **não** deve conter `/rest/v1/` no final
-> - A anon key é a chave **"anon public"** (não a "service_role" key, que dá acesso irrestrito)
-
-Salve o arquivo (Ctrl+S).
+> - Use a chave **"anon public"**, não a "service_role" key
 
 ---
 
@@ -176,7 +185,7 @@ git push -u origin feat/supabase-cloudflare-migration
    | **Project name** | `adecompt` |
    | **Production branch** | `main` |
    | **Framework preset** | **None** |
-   | **Build command** | **(deixe vazio)** |
+   | **Build command** | `node build.js` |
    | **Build output directory** | `/` |
    | **Root directory** | (vazio) |
 
@@ -184,8 +193,11 @@ git push -u origin feat/supabase-cloudflare-migration
 
    | Variable name | Value |
    |---|---|
-   | `VITE_SUPABASE_URL` | `https://seu-projeto.supabase.co` |
-   | `VITE_SUPABASE_ANON_KEY` | `eyJhbGciOiJIUzI1NiIs...` |
+   | `SUPABASE_URL` | `https://ormtgxnlfrqybjjaneee.supabase.co` |
+   | `SUPABASE_ANON_KEY` | `eyJhbGciOiJIUzI1NiIs...` |
+
+   > ℹ️ O nome das variáveis é `SUPABASE_URL` e `SUPABASE_ANON_KEY` (sem `VITE_`).
+   > O script [`build.js`](build.js) lê essas variáveis e gera o arquivo [`env.js`](env.js) automaticamente durante o deploy.
 
 7. Clique em **"Save and Deploy"** 🚀
 

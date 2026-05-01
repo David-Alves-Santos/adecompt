@@ -1,28 +1,17 @@
 /**
  * ADECOMPT - Supabase Client Configuration
  *
- * This file initializes the Supabase client.
- * In production (Cloudflare Pages), set these environment variables
- * in the Cloudflare Pages dashboard:
- *   Settings > Environment variables
+ * The credentials are loaded from env.js (gitignored) for security.
  *
- * For local development, create a .env file in the project root
- * (see .env.example).
+ * Local development:
+ *   1. Copy js/env.example.js as env.js (project root)
+ *   2. Fill in your Supabase credentials
+ *   3. Never commit env.js (it's in .gitignore)
+ *
+ * Cloudflare Pages:
+ *   Generated automatically by build.js from environment variables
+ *   SUPABASE_URL and SUPABASE_ANON_KEY configured in the dashboard.
  */
-
-// ---- Configuration ----
-// ⚠️ REPLACE these values with your Supabase project credentials
-// Get them from: https://supabase.com > Project > Settings > API
-//
-// IMPORTANTE:
-//   url     = APENAS a URL base do projeto (ex: https://xxx.supabase.co)
-//             NÃO adicione /rest/v1/ no final — o SDK gerencia isso automaticamente
-//   anonKey = A chave "anon public" (começa com "eyJ...")
-//
-const SUPABASE_CONFIG = {
-  url: 'https://ormtgxnlfrqybjjaneee.supabase.co',
-  anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ybXRneG5sZnJxeWJqamFuZWVlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2NDAzNDIsImV4cCI6MjA5MzIxNjM0Mn0.CEoTG1ruAz4lb6atu9bRHkGM_h0Dx4boDHXXDLgrTH0'
-};
 
 // ----------------------------------------------------------------
 // Supabase Client Initialization
@@ -31,6 +20,24 @@ const SUPABASE_CONFIG = {
 // ----------------------------------------------------------------
 
 let supabaseClient = null;
+
+/**
+ * Carrega a configuração do window.ADECOMPT_CONFIG
+ * (definido em env.js ou gerado pelo build.js do Cloudflare Pages)
+ */
+function getSupabaseConfig() {
+  const config = window.ADECOMPT_CONFIG;
+  if (!config || !config.supabaseUrl || !config.supabaseAnonKey) {
+    console.warn(
+      '⚠️  ADECOMPT_CONFIG não encontrado.\n' +
+      '   Certifique-se de que o arquivo env.js foi carregado antes de supabase-client.js.\n' +
+      '   Local:   copie env.example.js como env.js na raiz do projeto e preencha os dados\n' +
+      '   Cloudflare: configure SUPABASE_URL e SUPABASE_ANON_KEY nas environment variables'
+    );
+    return null;
+  }
+  return config;
+}
 
 /**
  * Returns the initialized Supabase client singleton.
@@ -47,8 +54,11 @@ function getSupabaseClient() {
     return null;
   }
 
+  const config = getSupabaseConfig();
+  if (!config) return null;
+
   const { createClient } = window.supabase;
-  supabaseClient = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey, {
+  supabaseClient = createClient(config.supabaseUrl, config.supabaseAnonKey, {
     auth: {
       autoRefreshToken: true,
       persistSession: true,

@@ -6,5 +6,6 @@ server.log
 server.err
 # Environment variables (local overrides)
 .env
+env.js
 # Supabase local config
 .supabase/
