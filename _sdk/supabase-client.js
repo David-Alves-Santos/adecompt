@@ -13,9 +13,15 @@
 // ---- Configuration ----
 // ⚠️ REPLACE these values with your Supabase project credentials
 // Get them from: https://supabase.com > Project > Settings > API
+//
+// IMPORTANTE:
+//   url     = APENAS a URL base do projeto (ex: https://xxx.supabase.co)
+//             NÃO adicione /rest/v1/ no final — o SDK gerencia isso automaticamente
+//   anonKey = A chave "anon public" (começa com "eyJ...")
+//
 const SUPABASE_CONFIG = {
-  url: 'https://seu-projeto.supabase.co',
-  anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.sua-chave-anon-aqui'
+  url: 'https://ormtgxnlfrqybjjaneee.supabase.co',
+  anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ybXRneG5sZnJxeWJqamFuZWVlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2NDAzNDIsImV4cCI6MjA5MzIxNjM0Mn0.CEoTG1ruAz4lb6atu9bRHkGM_h0Dx4boDHXXDLgrTH0'
 };
 
 // ----------------------------------------------------------------

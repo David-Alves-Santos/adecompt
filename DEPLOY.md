@@ -45,13 +45,24 @@ Abra o navegador e acesse: [https://supabase.com](https://supabase.com)
 
 ## 🔹 Passo 3 — Aplicar o Schema do Banco
 
+> ⚠️ **IMPORTANTE:** Use sempre o botão **"RUN"** (▶️), **NUNCA** o botão **"Explain"** (🔍). O "Explain" não funciona com múltiplos comandos.
+
+### Parte A — Criar as 5 Tabelas
+
 1. No menu lateral esquerdo, clique em **"SQL Editor"**
 2. Clique em **"New query"**
-3. Abra o arquivo [`supabase/migrations/001_initial_schema.sql`](supabase/migrations/001_initial_schema.sql) no VS Code
+3. Abra o arquivo [`supabase/migrations/001_tables.sql`](supabase/migrations/001_tables.sql) no VS Code
 4. **Copie TODO o conteúdo** (Ctrl+A → Ctrl+C)
 5. **Cole no SQL Editor** do Supabase (Ctrl+V)
-6. Clique em **"Run"** ⚡ (ou Ctrl+Enter)
-7. ✅ **Pronto!** As 5 tabelas foram criadas
+6. ✅ **Clique em "RUN"** (▶️) — você verá "Success. No rows returned" (isso é normal para CREATE TABLE)
+7. ⚠️ Se aparecer "Potential issue detected — Query has destructive operations", apenas clique em **"Run anyway"**
+
+### Parte B — Adicionar Índices, Segurança (RLS) e Trigger
+
+1. **"New query"** novamente
+2. Abra o arquivo [`supabase/migrations/002_indexes_rls.sql`](supabase/migrations/002_indexes_rls.sql) no VS Code
+3. Copie, cole e **clique em "RUN"** (▶️)
+4. ✅ Pronto! Tabelas, índices, RLS e trigger estão configurados
 
 ---
 
@@ -96,23 +107,30 @@ where email = 'admin@escola.com';
 1. Menu lateral: **"Project Settings"** (⚙️) → **"API"**
 2. Copie:
 
-   | O que copiar | Onde está |
-   |---|---|
-   | **Project URL** | Começa com `https://` |
-   | **anon public key** | Linha "anon", `eyJ...` |
+   | O que copiar | Onde está | Exemplo |
+   |---|---|---|
+   | **Project URL** | Linha "Project URL" | `https://ormtgxnlfrqybjjaneee.supabase.co` |
+   | **anon public key** | Linha "anon public", começa com `eyJ...` | `eyJhbGciOiJIUzI1NiIs...` |
+
+3. ⚠️ **ATENÇÃO:** A URL é **apenas** a base do projeto (`https://xxx.supabase.co`).
+   **NÃO** adicione `/rest/v1/` no final. O SDK do Supabase já gerencia os caminhos automaticamente.
 
 ---
 
 ## 🔹 Passo 7 — Configurar o Projeto
 
-Abra [`_sdk/supabase-client.js`](_sdk/supabase-client.js) no VS Code e substitua:
+Abra [`_sdk/supabase-client.js`](_sdk/supabase-client.js) no VS Code e substitua os placeholders:
 
 ```javascript
 const SUPABASE_CONFIG = {
-  url: 'https://seu-projeto.supabase.co',  // ← seu Project URL
-  anonKey: 'eyJhbGciOiJIUzI1NiIs...'       // ← sua anon key
+  url: 'https://ormtgxnlfrqybjjaneee.supabase.co',   // ← seu Project URL (SEM /rest/v1/)
+  anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...' // ← sua anon public key
 };
 ```
+
+> ⚠️ **Importante:**
+> - A URL **não** deve conter `/rest/v1/` no final
+> - A anon key é a chave **"anon public"** (não a "service_role" key, que dá acesso irrestrito)
 
 Salve o arquivo (Ctrl+S).
 
