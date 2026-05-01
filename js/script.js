@@ -1495,6 +1495,55 @@ async function saveUser() {
   if (allData.length >= 999) { toast('Limite de registros atingido.','error'); return; }
 
 
+  // --- SUPABASE AUTH MODE ---
+  if (isSupabaseMode()) {
+    try {
+      const supabase = getSupabaseClient();
+
+      // Save current admin session to restore after signUp
+      const { data: { session: adminSession } } = await supabase.auth.getSession();
+      const adminRefreshToken = adminSession?.refresh_token || null;
+
+      // Create user in Supabase Auth — the trigger handle_new_user()
+      // will auto-create the profile in public.profiles
+      const { data, error } = await supabase.auth.signUp({
+        email: email,
+        password: pass,
+        options: {
+          data: {
+            name: name,
+            role: role,
+            phone: phone || ''
+          }
+        }
+      });
+
+      if (error) {
+        console.error('Supabase Auth signUp error:', error);
+        toast('❌ Erro ao criar usuário: ' + error.message, 'error');
+        return;
+      }
+
+      // Restore admin session if signUp replaced it (when email confirm is disabled)
+      if (adminRefreshToken) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData?.session?.user?.email !== adminSession?.user?.email) {
+          await supabase.auth.setSession({ refresh_token: adminRefreshToken });
+        }
+      }
+
+      toast('✅ Usuário cadastrado com sucesso!');
+      document.getElementById('user-form-area').innerHTML='';
+      navigate('usuarios');
+    } catch (err) {
+      console.error('Erro ao salvar usuário (Supabase):', err);
+      toast('❌ Erro ao salvar usuário.','error');
+    }
+    return;
+  }
+
+
+  // --- LEGACY MODE (Express API fallback) ---
   try {
     const r = await window.dataSdk.create({
       type:'user', name, email, password:pass, role, phone, user_status:'ativo',

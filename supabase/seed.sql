@@ -42,16 +42,53 @@ values
   ('a0000000-0000-0000-0000-000000000001', 2, '02', 'Positivo', '', '2026-04-24T18:07:31.557Z');
 
 -- =============================================================
--- NOTE: Users and Reservations are tied to Supabase Auth.
--- After creating the admin user via Supabase Auth dashboard:
---   1. Go to Authentication > Users > Add User
---   2. Create: admin@escola.com / admin123
---   3. Then run the SQL below to set up the admin profile:
+-- IMPORTANT: Users and Reservations are tied to Supabase Auth.
+-- =============================================================
+--
+-- STEP 1 - Create the admin user in Supabase Auth:
+--   Go to Authentication > Users > Add User
+--   Email: admin@escola.com
+--   Password: admin123
+--   (Or use the SQL alternative below)
+--
+--   🔐 SQL alternative (run this instead of using the UI):
+--   -- NOTE: This requires the pgcrypto extension (usually enabled by default)
+--   select service_role;
+--   select extensions.gen_salt('bf') into salt;
+--   insert into auth.users
+--     (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+--      raw_user_app_meta_data, raw_user_meta_data, created_at, updated_at,
+--      confirmation_token, email_change, email_change_token_new, recovery_token)
+--   values
+--     ('00000000-0000-0000-0000-000000000000',
+--      gen_random_uuid(),
+--      'authenticated',
+--      'authenticated',
+--      'admin@escola.com',
+--      crypt('admin123', extensions.gen_salt('bf')),
+--      now(),
+--      '{"provider": "email", "providers": ["email"]}',
+--      '{"name": "Administrador", "role": "admin", "phone": ""}',
+--      now(), now(),
+--      '', '', '', '');
+--
+--   The trigger handle_new_user() will auto-create the profile
+--   with the metadata above. No extra SQL needed.
+--
+-- STEP 2 - (Only if using UI in STEP 1):
+--   If you created the admin via the Auth Users UI (not SQL),
+--   run this to set name, role, and phone:
 --
 --   update public.profiles
 --   set name = 'Administrador',
 --       role = 'admin'
 --   where email = 'admin@escola.com';
 --
--- For regular users, they can be created via the app UI.
+-- STEP 3 - Now log in at the app:
+--   Email: admin@escola.com
+--   Password: admin123
+--
+-- STEP 4 - Create regular users via the app UI (Admin > Usuários > + Novo):
+--   The app now calls supabase.auth.signUp() which creates the user
+--   in Auth AND the trigger auto-creates the profile.
 -- =============================================================
