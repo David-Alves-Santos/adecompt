@@ -31,14 +31,13 @@ function toLegacyId(uuid) {
 
 // ========== DATA HANDLER ==========
 
-let dataHandler = null;
-let allData = [];
+let _dataHandler = null;
 let pollingInterval = null;
 let realtimeChannel = null;
 
 function notifyDataChanged() {
-  if (dataHandler && typeof dataHandler.onDataChanged === 'function') {
-    dataHandler.onDataChanged(allData);
+  if (_dataHandler && typeof _dataHandler.onDataChanged === 'function') {
+    _dataHandler.onDataChanged(allData);
   }
 }
 
@@ -190,7 +189,7 @@ window.dataSdk = {
    * @returns {Promise<{isOk: boolean}>}
    */
   async init(handler) {
-    dataHandler = handler;
+    _dataHandler = handler;
 
     // Try Supabase first; fall back to Express API
     const hasSupabase = initSupabase();
