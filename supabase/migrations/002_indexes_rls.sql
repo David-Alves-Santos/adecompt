@@ -34,7 +34,16 @@ create policy "Users can insert their own profile"
 
 create policy "Users can update own profile"
   on public.profiles for update
-  using (id = auth.uid());
+  using (
+    id = auth.uid()
+    or exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
+  );
+
+create policy "Admin can delete profiles"
+  on public.profiles for delete
+  using (
+    exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
+  );
 
 -- 2.2 Carts
 create policy "Carts are viewable by authenticated users"

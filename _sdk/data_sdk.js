@@ -276,12 +276,18 @@ window.dataSdk = {
           break;
         }
         case 'device': {
+          // Validar device_number antes do insert: a constraint do banco exige 1–40.
+          // parseInt('') retorna NaN → || 0 daria 0, violando a constraint silenciosamente.
+          const deviceNum = parseInt(record.device_number);
+          if (!deviceNum || deviceNum < 1 || deviceNum > 40) {
+            return { isOk: false, error: `Número do dispositivo inválido (${record.device_number}). Deve ser um inteiro entre 1 e 40.` };
+          }
           // Need to find the cart UUID from __backendId
           const cartRec = allData.find(d => d.__backendId === record.cart_id && d.type === 'cart');
           const cartUuid = cartRec ? cartRec.id || record.cart_id : record.cart_id;
           result = await _supa.from('devices').insert({
             cart_id: cartUuid,
-            device_number: parseInt(record.device_number) || 0,
+            device_number: deviceNum,
             device_serial: record.device_serial || '',
             device_brand: record.device_brand || '',
             device_type: record.device_type || ''

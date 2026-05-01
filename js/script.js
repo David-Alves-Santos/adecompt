@@ -726,25 +726,29 @@ function showConfirmationModal(cartId, date, periods, cart) {
   cancelBtn.onclick = (e) => {
     e.stopPropagation();
     modal.remove();
+    isLoading = false; // liberar o botão ao cancelar (RACE-1)
   };
-  
+
   confirmBtn.onclick = (e) => {
     e.stopPropagation();
     modal.remove();
+    // isLoading já está true; proceedWithReservation vai gerenciá-lo daqui
     proceedWithReservation(cartId, date, periods, cart);
   };
-  
+
   modal.onclick = (e) => {
     if (e.target === modal) {
       modal.remove();
+      isLoading = false; // liberar ao fechar clicando fora (RACE-1)
     }
   };
 }
 
 
 async function proceedWithReservation(cartId, date, periods, cart) {
-  if (isLoading) return;
-  isLoading = true;
+  // isLoading já foi setado como true em confirmReservation() antes de abrir o modal.
+  // Esta guarda cobre chamadas diretas eventuais.
+  if (!isLoading) isLoading = true;
 
 
   if (!cart || periods.length === 0 || selectedDevices.size === 0) {
@@ -816,9 +820,14 @@ async function proceedWithReservation(cartId, date, periods, cart) {
   }
   
   if (successCount > 0) {
-    toast(`✅ ${successCount} reserva(s) criada(s) com sucesso!`);
+    // BUG-3: diferenciar sucesso total de falha parcial
+    if (errorCount === 0) {
+      toast(`✅ ${successCount} reserva(s) criada(s) com sucesso!`);
+    } else {
+      toast(`⚠️ ${successCount} reserva(s) criada(s), mas ${errorCount} falharam. Verifique conflitos.`, 'warning');
+    }
     selectedDevices.clear();
-    
+
     // Reset form
     const cartIdEl = document.getElementById('sel-cart');
     const dateEl = document.getElementById('sel-date');
@@ -826,9 +835,9 @@ async function proceedWithReservation(cartId, date, periods, cart) {
     if (dateEl) dateEl.value = todayStr();
     const periodCheckboxes = document.querySelectorAll('.period-cb');
     periodCheckboxes.forEach(cb => cb.checked = false);
-    
+
     updateDeviceGrid();
-    
+
     // Navigate to "Minhas Reservas" after delay
     setTimeout(() => navigate('minhas'), 1500);
   } else {
@@ -870,6 +879,9 @@ function confirmReservation() {
     return;
   }
 
+
+  // Bloquear novos cliques enquanto o modal está aberto (RACE-1)
+  isLoading = true;
 
   // Show confirmation modal
   showConfirmationModal(cartId, date, periods, cart);
@@ -921,12 +933,21 @@ async function cancelGroup(ids) {
   if (isLoading) return;
   isLoading = true;
   const arr = ids.split(',');
+  let hasError = false;
   for (const id of arr) {
     const rec = allData.find(d => d.__backendId === id);
-    if (rec) await window.dataSdk.delete(rec);
+    if (rec) {
+      const result = await window.dataSdk.delete(rec);
+      if (!result.isOk) hasError = true;
+    }
   }
   isLoading = false;
-  toast('Reserva cancelada.');
+  // ERROR-1: só confirmar sucesso se a operação realmente completou
+  if (hasError) {
+    toast('⚠️ Erro ao cancelar uma ou mais reservas.', 'error');
+  } else {
+    toast('Reserva cancelada.');
+  }
 }
 
 
@@ -1102,22 +1123,38 @@ function removePeriod(idx) {
 
 
 async function saveHorarios() {
+  // BUG-5: sem este guard, duplo clique dispara dois creates simultâneos antes do
+  // allData ser atualizado, gerando registros duplicados de school_periods.
+  if (isLoading) return;
+  isLoading = true;
+
   const inputs = document.querySelectorAll('.period-input');
   const newPeriods = Array.from(inputs).map(i => i.value.trim()).filter(v => v);
-  
+
   if (newPeriods.length === 0) {
+    isLoading = false;
     toast('Adicione pelo menos um horário.', 'error');
     return;
   }
 
+  // VALIDATION-3: o código de notificação (linha ~141) faz regex /\((\d{2}):(\d{2})-(\d{2}):(\d{2})\)/
+  // para extrair horário. Períodos fora desse formato quebram a notificação silenciosamente.
+  const periodFormat = /\(\d{2}:\d{2}-\d{2}:\d{2}\)/;
+  const invalids = newPeriods.filter(p => !periodFormat.test(p));
+  if (invalids.length > 0) {
+    isLoading = false;
+    toast(`❌ Formato inválido: "${invalids[0]}". Use: Nome (HH:MM-HH:MM)`, 'error');
+    return;
+  }
 
   const existingConfig = allData.find(d => d.config_key === 'school_periods');
-  
+
   if (existingConfig) {
     const result = await window.dataSdk.update({
       ...existingConfig,
       periods_json: JSON.stringify(newPeriods)
     });
+    isLoading = false;
     if (result.isOk) {
       PERIODS = newPeriods;
       toast('Horários atualizados com sucesso!');
@@ -1126,6 +1163,7 @@ async function saveHorarios() {
     }
   } else {
     if (allData.length >= 999) {
+      isLoading = false;
       toast('Limite de registros atingido.', 'error');
       return;
     }
@@ -1138,6 +1176,7 @@ async function saveHorarios() {
       cart_id: '', reserved_by: '', reserved_email: '', date: '',
       period: '', status: '', created_at: new Date().toISOString()
     });
+    isLoading = false;
     if (result.isOk) {
       PERIODS = newPeriods;
       toast('Horários salvos com sucesso!');
@@ -1345,11 +1384,19 @@ async function saveDevice(cartId) {
   const model = document.getElementById(`new-dev-model-${cartId}`).value.trim();
   
   if (!deviceNumber || !serial || !brand) { toast('Preencha os campos obrigatórios.','error'); return; }
+  // VALIDATION-4: garantir no front-end que o número está no range aceito pelo banco (1–40).
+  // O SDK também valida, mas um erro antecipado evita round-trip desnecessário.
+  const parsedNum = parseInt(deviceNumber);
+  if (isNaN(parsedNum) || parsedNum < 1 || parsedNum > 40) {
+    toast('❌ Número do dispositivo deve ser entre 1 e 40.', 'error'); return;
+  }
   if (allData.length >= 999) { toast('Limite de registros atingido.','error'); return; }
 
 
   // Check if device number already exists in this cart
-  const existingDevice = getDevices().find(d => String(d.cart_id) === String(cartId) && d.device_number === deviceNumber);
+  // BUG-2: normalizar para inteiro nos dois lados — device_number vem como number do Supabase
+  // e como string do input HTML; a comparação sem cast falha silenciosamente.
+  const existingDevice = getDevices().find(d => String(d.cart_id) === String(cartId) && parseInt(d.device_number) === parseInt(deviceNumber));
   if (existingDevice) { toast(`Posição #${deviceNumber} já está cadastrada neste carrinho.`,'error'); return; }
 
 
@@ -1365,13 +1412,23 @@ async function saveDevice(cartId) {
 
 async function deleteCart(id) {
   const rec = allData.find(d => d.__backendId === id);
-  if (rec) { await window.dataSdk.delete(rec); toast('Carrinho removido.'); }
+  if (rec) {
+    const result = await window.dataSdk.delete(rec);
+    // ERROR-1: checar resultado antes de confirmar sucesso
+    if (result.isOk) { toast('Carrinho removido.'); }
+    else { toast('❌ Erro ao remover carrinho.', 'error'); }
+  }
 }
 
 
 async function deleteDevice(id) {
   const rec = allData.find(d => d.__backendId === id);
-  if (rec) { await window.dataSdk.delete(rec); toast('Dispositivo removido.'); }
+  if (rec) {
+    const result = await window.dataSdk.delete(rec);
+    // ERROR-1: checar resultado antes de confirmar sucesso
+    if (result.isOk) { toast('Dispositivo removido.'); }
+    else { toast('❌ Erro ao remover dispositivo.', 'error'); }
+  }
 }
 
 
@@ -1500,8 +1557,9 @@ async function saveUser() {
     try {
       const supabase = getSupabaseClient();
 
-      // Save current admin session to restore after signUp
+      // Save current admin session (both tokens) to restore after signUp
       const { data: { session: adminSession } } = await supabase.auth.getSession();
+      const adminAccessToken  = adminSession?.access_token  || null;
       const adminRefreshToken = adminSession?.refresh_token || null;
 
       // Create user in Supabase Auth — the trigger handle_new_user()
@@ -1524,15 +1582,26 @@ async function saveUser() {
         return;
       }
 
-      // Restore admin session if signUp replaced it (when email confirm is disabled)
-      if (adminRefreshToken) {
+      // Problema 3: se o projeto exige confirmação de e-mail, o usuário
+      // criado não terá sessão ativa — avisar o admin claramente.
+      const needsConfirmation = data?.user && !data?.session;
+      if (needsConfirmation) {
+        toast('⚠️ Usuário criado, mas precisa confirmar o e-mail antes de acessar o sistema.', 'warning');
+      }
+
+      // Restaurar sessão do admin: setSession() exige access_token + refresh_token.
+      // Usar apenas refresh_token faz a chamada falhar silenciosamente.
+      if (adminAccessToken && adminRefreshToken) {
         const { data: sessionData } = await supabase.auth.getSession();
         if (sessionData?.session?.user?.email !== adminSession?.user?.email) {
-          await supabase.auth.setSession({ refresh_token: adminRefreshToken });
+          await supabase.auth.setSession({
+            access_token:  adminAccessToken,
+            refresh_token: adminRefreshToken
+          });
         }
       }
 
-      toast('✅ Usuário cadastrado com sucesso!');
+      if (!needsConfirmation) toast('✅ Usuário cadastrado com sucesso!');
       document.getElementById('user-form-area').innerHTML='';
       navigate('usuarios');
     } catch (err) {
@@ -1565,7 +1634,12 @@ async function saveUser() {
 
 async function deleteUser(id) {
   const rec = allData.find(d => d.__backendId === id);
-  if (rec) { await window.dataSdk.delete(rec); toast('Usuário removido permanentemente.'); }
+  if (rec) {
+    const result = await window.dataSdk.delete(rec);
+    // ERROR-1: checar resultado antes de confirmar sucesso
+    if (result.isOk) { toast('Usuário removido permanentemente.'); }
+    else { toast('❌ Erro ao remover usuário.', 'error'); }
+  }
 }
 
 
@@ -1754,7 +1828,8 @@ function renderMonitor(c) {
           </div>
           <div class="grid grid-cols-8 sm:grid-cols-10 gap-1">
             ${Array.from({length:40},(_,i)=>i+1).map(n => {
-              const res = cartRes.find(r=>r.device_number===n);
+              // BUG-2: device_number vem como string das reservas; comparar com parseInt
+              const res = cartRes.find(r=>parseInt(r.device_number)===n);
               return `<div class="rounded-lg p-1 text-center text-xs ${res?'bg-red-500/20 text-red-400 border border-red-500/30':'bg-blue-500/10 text-blue-400/60 border border-slate-800'}" title="${res?res.reserved_by+' — '+res.period:ct.device_type+' #'+n+' disponível'}">${n}</div>`;
             }).join('')}
           </div>
@@ -1897,13 +1972,22 @@ async function adminCancelReservation(idsStr) {
   if (isLoading) return;
   isLoading = true;
   const ids = idsStr.split(',');
+  let hasError = false;
   for (const id of ids) {
     const rec = allData.find(d => d.__backendId === id);
-    if (rec) await window.dataSdk.delete(rec);
+    if (rec) {
+      const result = await window.dataSdk.delete(rec);
+      // ERROR-1: registrar falhas em vez de ignorar silenciosamente
+      if (!result.isOk) hasError = true;
+    }
   }
   isLoading = false;
-  toast('Reserva excluída.');
-  navigate('gerenciar');
+  if (hasError) {
+    toast('⚠️ Erro ao excluir uma ou mais reservas.', 'error');
+  } else {
+    toast('Reserva excluída.');
+    navigate('gerenciar');
+  }
 }
 
 // ========== ADMIN: RELATÓRIO ==========
