@@ -84,11 +84,16 @@ async function fetchAllSupabaseData() {
     const { data: devices, error: devsErr } = await _supa.from('devices').select('*');
     if (devsErr) throw devsErr;
     (devices || []).forEach(d => {
-      result.push(mapToAllDataFormat({
+      const mapped = mapToAllDataFormat({
         ...d,
         device_id: String(d.id),
         cart_id: String(d.cart_id)
-      }, 'device'));
+      }, 'device');
+      // mapToAllDataFormat deleta cart_id para "limpar" UUIDs, mas devices precisam
+      // de cart_id como referência relacional — sem ele, toda filtragem por carrinho
+      // (grid de devices, duplicate-check, visão admin) retorna vazio/falha.
+      mapped.cart_id = String(d.cart_id);
+      result.push(mapped);
     });
 
     // 3. Fetch reservations
@@ -282,9 +287,10 @@ window.dataSdk = {
           if (!deviceNum || deviceNum < 1 || deviceNum > 40) {
             return { isOk: false, error: `Número do dispositivo inválido (${record.device_number}). Deve ser um inteiro entre 1 e 40.` };
           }
-          // Need to find the cart UUID from __backendId
+          // record.cart_id já é o __backendId (UUID) do carrinho vindo do script.
+          // cartRec.id é deletado por mapToAllDataFormat; usar __backendId como UUID.
           const cartRec = allData.find(d => d.__backendId === record.cart_id && d.type === 'cart');
-          const cartUuid = cartRec ? cartRec.id || record.cart_id : record.cart_id;
+          const cartUuid = cartRec ? cartRec.__backendId : record.cart_id;
           result = await _supa.from('devices').insert({
             cart_id: cartUuid,
             device_number: deviceNum,
