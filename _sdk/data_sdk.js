@@ -44,10 +44,10 @@ function notifyDataChanged() {
 
 // ========== SUPABASE MODE ==========
 
-let supabase = null;
+let _supa = null;
 
 function isSupabaseMode() {
-  return supabase !== null;
+  return _supa !== null;
 }
 
 /**
@@ -58,7 +58,7 @@ function initSupabase() {
   try {
     const client = getSupabaseClient();
     if (!client) return false;
-    supabase = client;
+    _supa = client;
     return true;
   } catch (e) {
     console.warn('⚠️ Supabase not available, falling back to Express API mode.', e.message);
@@ -70,19 +70,19 @@ function initSupabase() {
  * Fetch all data from Supabase tables and merge into a single allData array.
  */
 async function fetchAllSupabaseData() {
-  if (!supabase) return [];
+  if (!_supa) return [];
   const result = [];
 
   try {
     // 1. Fetch carts
-    const { data: carts, error: cartsErr } = await supabase.from('carts').select('*');
+    const { data: carts, error: cartsErr } = await _supa.from('carts').select('*');
     if (cartsErr) throw cartsErr;
     (carts || []).forEach(c => {
       result.push(mapToAllDataFormat({ ...c, cart_id: String(c.id) }, 'cart'));
     });
 
     // 2. Fetch devices
-    const { data: devices, error: devsErr } = await supabase.from('devices').select('*');
+    const { data: devices, error: devsErr } = await _supa.from('devices').select('*');
     if (devsErr) throw devsErr;
     (devices || []).forEach(d => {
       result.push(mapToAllDataFormat({
@@ -93,7 +93,7 @@ async function fetchAllSupabaseData() {
     });
 
     // 3. Fetch reservations
-    const { data: reservations, error: resErr } = await supabase.from('reservations').select('*');
+    const { data: reservations, error: resErr } = await _supa.from('reservations').select('*');
     if (resErr) throw resErr;
     (reservations || []).forEach(r => {
       result.push(mapToAllDataFormat({
@@ -103,7 +103,7 @@ async function fetchAllSupabaseData() {
     });
 
     // 4. Fetch user profiles (NOT from Auth — from public.profiles)
-    const { data: profiles, error: profErr } = await supabase.from('profiles').select('*');
+    const { data: profiles, error: profErr } = await _supa.from('profiles').select('*');
     if (profErr) throw profErr;
     (profiles || []).forEach(p => {
       result.push(mapToAllDataFormat({
@@ -113,7 +113,7 @@ async function fetchAllSupabaseData() {
     });
 
     // 5. Fetch school periods config
-    const { data: periods, error: perErr } = await supabase.from('school_periods').select('*');
+    const { data: periods, error: perErr } = await _supa.from('school_periods').select('*');
     if (perErr) throw perErr;
     (periods || []).forEach(p => {
       result.push(mapToAllDataFormat({
@@ -136,14 +136,14 @@ async function fetchAllSupabaseData() {
  * Subscribe to Supabase Realtime changes.
  */
 function subscribeRealtime() {
-  if (!supabase) return;
+  if (!_supa) return;
 
   // Unsubscribe previous channel if exists
   if (realtimeChannel) {
-    supabase.removeChannel(realtimeChannel);
+    _supa.removeChannel(realtimeChannel);
   }
 
-  realtimeChannel = supabase.channel('adempt-realtime')
+  realtimeChannel = _supa.channel('adempt-realtime')
     .on('postgres_changes',
       { event: '*', schema: 'public' },
       async () => {
@@ -269,7 +269,7 @@ window.dataSdk = {
       switch (type) {
         case 'cart': {
           const { cart_name, floor, device_type } = record;
-          result = await supabase.from('carts').insert({
+          result = await _supa.from('carts').insert({
             cart_name: cart_name || '',
             floor: floor || '',
             device_type: device_type || ''
@@ -280,7 +280,7 @@ window.dataSdk = {
           // Need to find the cart UUID from __backendId
           const cartRec = allData.find(d => d.__backendId === record.cart_id && d.type === 'cart');
           const cartUuid = cartRec ? cartRec.id || record.cart_id : record.cart_id;
-          result = await supabase.from('devices').insert({
+          result = await _supa.from('devices').insert({
             cart_id: cartUuid,
             device_number: parseInt(record.device_number) || 0,
             device_serial: record.device_serial || '',
@@ -290,7 +290,7 @@ window.dataSdk = {
           break;
         }
         case 'reservation': {
-          result = await supabase.from('reservations').insert({
+          result = await _supa.from('reservations').insert({
             cart_name: record.cart_name || '',
             cart_id: record.cart_id || '',
             floor: record.floor || '',
@@ -310,10 +310,10 @@ window.dataSdk = {
         case 'config': {
           if (record.config_key === 'school_periods') {
             // Check if config already exists
-            const { data: existing } = await supabase.from('school_periods').select('id').limit(1);
+            const { data: existing } = await _supa.from('school_periods').select('id').limit(1);
             if (existing && existing.length > 0) {
               // Update existing
-              result = await supabase.from('school_periods')
+              result = await _supa.from('school_periods')
                 .update({
                   periods_json: JSON.parse(record.periods_json || '[]'),
                   updated_at: new Date().toISOString()
@@ -322,7 +322,7 @@ window.dataSdk = {
                 .select().single();
             } else {
               // Insert new
-              result = await supabase.from('school_periods').insert({
+              result = await _supa.from('school_periods').insert({
                 periods_json: JSON.parse(record.periods_json || '[]')
               }).select().single();
             }
@@ -355,7 +355,7 @@ window.dataSdk = {
       switch (type) {
         case 'user': {
           // Update profile (not password — that's managed by Auth)
-          result = await supabase.from('profiles')
+          result = await _supa.from('profiles')
             .update({
               name: record.name,
               email: record.email,
@@ -368,7 +368,7 @@ window.dataSdk = {
           break;
         }
         case 'cart': {
-          result = await supabase.from('carts')
+          result = await _supa.from('carts')
             .update({
               cart_name: record.cart_name,
               floor: record.floor,
@@ -379,7 +379,7 @@ window.dataSdk = {
           break;
         }
         case 'device': {
-          result = await supabase.from('devices')
+          result = await _supa.from('devices')
             .update({
               device_number: parseInt(record.device_number),
               device_serial: record.device_serial,
@@ -391,7 +391,7 @@ window.dataSdk = {
           break;
         }
         case 'reservation': {
-          result = await supabase.from('reservations')
+          result = await _supa.from('reservations')
             .update({
               status: record.status || 'active',
               notification_sent: record.notification_sent === 'true'
@@ -402,7 +402,7 @@ window.dataSdk = {
         }
         case 'config': {
           if (record.config_key === 'school_periods') {
-            result = await supabase.from('school_periods')
+            result = await _supa.from('school_periods')
               .update({
                 periods_json: JSON.parse(record.periods_json || '[]'),
                 updated_at: new Date().toISOString()
@@ -445,7 +445,7 @@ window.dataSdk = {
           return { isOk: false, error: `Unknown record type: ${type}` };
       }
 
-      const { error } = await supabase.from(table).delete().eq('id', backendId);
+      const { error } = await _supa.from(table).delete().eq('id', backendId);
       if (error) throw error;
 
       // Re-fetch all data
