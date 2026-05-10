@@ -6,6 +6,13 @@
  * In Supabase mode  (new):  communicates with Supabase PostgreSQL via REST + Realtime
  *
  * The mode is auto-detected based on whether the Supabase client is configured.
+ *
+ * === OPTIMIZATIONS (2025-05) ===
+ * - _supabaseCreate/Update/Delete now apply changes locally instead of re-fetching all tables
+ * - New createBatch(records) performs a single INSERT for multiple reservations
+ * - Realtime events apply only the affected record instead of full re-fetch
+ * - Local write tracking prevents duplicate processing from Realtime echo
+ * - beginBatch()/endBatch() suppress intermediate re-renders during multi-step operations
  */
 
 // ========== HELPERS ==========
@@ -35,9 +42,68 @@ let _dataHandler = null;
 let pollingInterval = null;
 let realtimeChannel = null;
 
+/** Counter to suppress notifyDataChanged during batch operations */
+let _batchCount = 0;
+
+/** Counter to track local writes and avoid duplicate Realtime processing */
+let _localWriteCount = 0;
+let _lastLocalWritePayload = null;
+
 function notifyDataChanged() {
+  // Skip notifications during batch operations
+  if (_batchCount > 0) return;
   if (_dataHandler && typeof _dataHandler.onDataChanged === 'function') {
     _dataHandler.onDataChanged(allData);
+  }
+}
+
+/**
+ * Mark that the next Realtime event with this payload was originated locally
+ * and should be ignored.
+ */
+function markLocalWrite(payloadKey) {
+  _localWriteCount++;
+  _lastLocalWritePayload = payloadKey;
+}
+
+/**
+ * Check and consume a local write mark. Returns true if this event
+ * was produced by a local write and should be skipped.
+ */
+function consumeLocalWrite(payloadKey) {
+  if (_localWriteCount > 0 && _lastLocalWritePayload === payloadKey) {
+    _localWriteCount--;
+    if (_localWriteCount === 0) _lastLocalWritePayload = null;
+    return true;
+  }
+  // Cleanup stale counter if mismatched
+  if (_localWriteCount > 0) _localWriteCount--;
+  return false;
+}
+
+/**
+ * Apply a single changed record locally in allData.
+ * Handles insert, update, and delete operations.
+ */
+function _applyChangeLocally(record, operation) {
+  if (operation === 'INSERT') {
+    // Remove any existing record with same __backendId (avoid duplicates)
+    const existingIdx = allData.findIndex(d => d.__backendId === record.__backendId);
+    if (existingIdx !== -1) {
+      allData[existingIdx] = record;
+    } else {
+      allData.push(record);
+    }
+  } else if (operation === 'UPDATE') {
+    const idx = allData.findIndex(d => d.__backendId === record.__backendId);
+    if (idx !== -1) {
+      allData[idx] = { ...allData[idx], ...record };
+    } else {
+      allData.push(record);
+    }
+  } else if (operation === 'DELETE') {
+    const idx = allData.findIndex(d => d.__backendId === record.__backendId);
+    if (idx !== -1) allData.splice(idx, 1);
   }
 }
 
@@ -138,6 +204,7 @@ async function fetchAllSupabaseData() {
 
 /**
  * Subscribe to Supabase Realtime changes.
+ * Now applies only the affected record locally instead of re-fetching all tables.
  */
 function subscribeRealtime() {
   if (!_supa) return;
@@ -150,15 +217,89 @@ function subscribeRealtime() {
   realtimeChannel = _supa.channel('adempt-realtime')
     .on('postgres_changes',
       { event: '*', schema: 'public' },
-      async () => {
-        // Re-fetch all data on any change
-        allData = await fetchAllSupabaseData();
+      async (payload) => {
+        // Skip events originated by our own local writes to avoid double-processing
+        if (consumeLocalWrite(payload.event_type + ':' + (payload.new?.id || payload.old?.id || ''))) {
+          return;
+        }
+
+        // Apply only the affected record locally
+        _applyRealtimeEvent(payload);
         notifyDataChanged();
       }
     )
     .subscribe((status) => {
       console.log('🔄 Supabase Realtime status:', status);
     });
+}
+
+/**
+ * Apply a single Realtime payload to allData without re-fetching everything.
+ */
+function _applyRealtimeEvent(payload) {
+  const { eventType, new: newRecord, old: oldRecord } = payload;
+  const table = payload.table; // e.g. 'reservations', 'devices', etc.
+
+  // Map table name -> allData type
+  const tableToType = {
+    reservations: 'reservation',
+    devices: 'device',
+    carts: 'cart',
+    profiles: 'user',
+    school_periods: 'config'
+  };
+  const typeName = tableToType[table];
+  if (!typeName) return; // unknown table, ignore
+
+  let mappedRecord = null;
+
+  if (eventType === 'INSERT' && newRecord) {
+    mappedRecord = mapToAllDataFormat(
+      mapRealtimeRecord(newRecord, table),
+      typeName
+    );
+    _applyChangeLocally(mappedRecord, 'INSERT');
+  } else if (eventType === 'UPDATE' && newRecord) {
+    mappedRecord = mapToAllDataFormat(
+      mapRealtimeRecord(newRecord, table),
+      typeName
+    );
+    _applyChangeLocally(mappedRecord, 'UPDATE');
+  } else if (eventType === 'DELETE' && oldRecord) {
+    mappedRecord = {
+      __backendId: String(oldRecord.id),
+      type: typeName
+    };
+    _applyChangeLocally(mappedRecord, 'DELETE');
+  }
+}
+
+/**
+ * Map a raw Realtime record to the format expected by mapToAllDataFormat.
+ */
+function mapRealtimeRecord(record, table) {
+  const r = { ...record };
+  if (table === 'reservations') {
+    r.notification_sent = r.notification_sent ? 'true' : '';
+  }
+  if (table === 'school_periods') {
+    r.config_key = 'school_periods';
+    r.periods_json = typeof r.periods_json === 'string'
+      ? r.periods_json
+      : JSON.stringify(r.periods_json);
+  }
+  if (table === 'devices') {
+    // Preserve cart_id for relational integrity
+    r.cart_id = String(r.cart_id);
+    r.device_id = String(r.id);
+  }
+  if (table === 'carts') {
+    r.cart_id = String(r.id);
+  }
+  if (table === 'profiles') {
+    r.password = '';
+  }
+  return r;
 }
 
 // ========== EXPRESS (LEGACY) MODE ==========
@@ -228,6 +369,24 @@ window.dataSdk = {
   },
 
   /**
+   * Begin a batch operation — suppresses notifyDataChanged until endBatch().
+   * Use around multi-step operations to avoid intermediate re-renders.
+   */
+  beginBatch() {
+    _batchCount++;
+  },
+
+  /**
+   * End a batch operation — re-enables notifyDataChanged and triggers one notification.
+   */
+  endBatch() {
+    if (_batchCount > 0) _batchCount--;
+    if (_batchCount === 0) {
+      notifyDataChanged();
+    }
+  },
+
+  /**
    * Create a new record.
    * @param {Object} record - The record to create (with a `type` field)
    * @returns {Promise<{isOk: boolean, id?: string}>}
@@ -237,6 +396,19 @@ window.dataSdk = {
       return this._supabaseCreate(record);
     }
     return this._legacyCreate(record);
+  },
+
+  /**
+   * Create multiple records in a single batch operation.
+   * @param {Array<Object>} records - Array of records to create (all must have same `type`)
+   * @returns {Promise<{isOk: boolean, count?: number, ids?: string[], error?: string}>}
+   */
+  async createBatch(records) {
+    if (!records || records.length === 0) return { isOk: true, count: 0 };
+    if (isSupabaseMode()) {
+      return this._supabaseCreateBatch(records);
+    }
+    return this._legacyCreateBatch(records);
   },
 
   /**
@@ -346,14 +518,94 @@ window.dataSdk = {
 
       if (result && result.error) throw result.error;
 
-      // Re-fetch all data to keep state consistent
-      allData = await fetchAllSupabaseData();
-      notifyDataChanged();
+      // Apply change locally instead of re-fetching all tables
+      // This eliminates the full re-fetch + re-render on every single CRUD
+      const newId = result?.data?.id || 'unknown';
+      const mapped = mapToAllDataFormat(
+        mapRealtimeRecord(result.data, type === 'reservation' ? 'reservations'
+          : type === 'cart' ? 'carts'
+          : type === 'device' ? 'devices'
+          : type === 'user' ? 'profiles'
+          : type === 'config' ? 'school_periods'
+          : type),
+        type
+      );
+      // Mark this as a local write so Realtime doesn't double-process it
+      markLocalWrite('INSERT:' + newId);
+      _applyChangeLocally(mapped, 'INSERT');
 
-      return { isOk: true, id: result?.data?.id || 'unknown' };
+      // Only notify if not in batch mode
+      if (_batchCount === 0) notifyDataChanged();
+
+      return { isOk: true, id: String(newId) };
     } catch (error) {
       console.error('❌ Erro ao criar registro:', error.message);
       return { isOk: false, error: error.message };
+    }
+  },
+
+  /**
+   * Insert multiple records in a single Supabase call.
+   * Much faster than N sequential create() calls (1 round-trip instead of N).
+   */
+  async _supabaseCreateBatch(records) {
+    try {
+      if (!records || records.length === 0) return { isOk: true, count: 0 };
+
+      const type = records[0].type;
+      if (type !== 'reservation') {
+        // Fall back to sequential for non-reservation types
+        let successCount = 0;
+        const ids = [];
+        for (const rec of records) {
+          const r = await this._supabaseCreate(rec);
+          if (r.isOk) { successCount++; if (r.id) ids.push(r.id); }
+        }
+        return { isOk: successCount > 0, count: successCount, ids };
+      }
+
+      // Batch insert reservations
+      const rows = records.map(r => ({
+        cart_name: r.cart_name || '',
+        cart_id: r.cart_id || '',
+        floor: r.floor || '',
+        device_type: r.device_type || '',
+        device_number: String(r.device_number || ''),
+        device_brand: r.device_brand || '',
+        device_serial: r.device_serial || '',
+        reserved_by: r.reserved_by || '',
+        reserved_email: r.reserved_email || '',
+        date: r.date || '',
+        period: r.period || '',
+        status: r.status || 'active',
+        notification_sent: r.notification_sent === 'true'
+      }));
+
+      const { data, error } = await _supa.from('reservations')
+        .insert(rows)
+        .select();
+
+      if (error) throw error;
+
+      // Apply all new records locally
+      const createdRecords = data || [];
+      const ids = [];
+      for (const row of createdRecords) {
+        const mapped = mapToAllDataFormat({
+          ...row,
+          notification_sent: row.notification_sent ? 'true' : ''
+        }, 'reservation');
+        ids.push(String(row.id));
+        markLocalWrite('INSERT:' + row.id);
+        _applyChangeLocally(mapped, 'INSERT');
+      }
+
+      if (_batchCount === 0) notifyDataChanged();
+
+      return { isOk: true, count: createdRecords.length, ids };
+    } catch (error) {
+      console.error('❌ Erro ao criar reservas em lote:', error.message);
+      return { isOk: false, count: 0, error: error.message };
     }
   },
 
@@ -429,9 +681,18 @@ window.dataSdk = {
 
       if (result && result.error) throw result.error;
 
-      // Re-fetch all data
-      allData = await fetchAllSupabaseData();
-      notifyDataChanged();
+      // Apply change locally instead of re-fetching all tables
+      const updatedRecord = { ...record };
+      if (result && result.data) {
+        // Merge any server-side changes (e.g. updated_at timestamps)
+        Object.keys(result.data).forEach(k => {
+          if (k !== 'id') updatedRecord[k] = result.data[k];
+        });
+      }
+      markLocalWrite('UPDATE:' + backendId);
+      _applyChangeLocally(updatedRecord, 'UPDATE');
+
+      if (_batchCount === 0) notifyDataChanged();
 
       return { isOk: true };
     } catch (error) {
@@ -459,9 +720,11 @@ window.dataSdk = {
       const { error } = await _supa.from(table).delete().eq('id', backendId);
       if (error) throw error;
 
-      // Re-fetch all data
-      allData = await fetchAllSupabaseData();
-      notifyDataChanged();
+      // Apply deletion locally instead of re-fetching all tables
+      markLocalWrite('DELETE:' + backendId);
+      _applyChangeLocally({ __backendId: backendId, type }, 'DELETE');
+
+      if (_batchCount === 0) notifyDataChanged();
 
       return { isOk: true };
     } catch (error) {
@@ -486,6 +749,22 @@ window.dataSdk = {
     } catch (error) {
       return { isOk: false, error: error.message };
     }
+  },
+
+  /**
+   * Batch create in legacy mode via sequential calls + single re-fetch at end.
+   */
+  async _legacyCreateBatch(records) {
+    if (!records || records.length === 0) return { isOk: true, count: 0 };
+    let successCount = 0;
+    const ids = [];
+    for (const rec of records) {
+      const r = await this._legacyCreate(rec);
+      if (r.isOk) { successCount++; if (r.id) ids.push(r.id); }
+    }
+    // Single re-fetch at the end instead of one per create
+    await this.fetchData();
+    return { isOk: successCount > 0, count: successCount, ids };
   },
 
   async _legacyUpdate(record) {
