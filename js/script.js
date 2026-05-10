@@ -766,50 +766,50 @@ async function proceedWithReservation(cartId, date, periods, cart) {
   }
 
 
+  // Build the full list of reservation records
+  const reservations = [];
+  for (const period of periods) {
+    for (const devNum of selectedDevices) {
+      reservations.push({
+        type: 'reservation',
+        cart_name: cart.cart_name || '',
+        cart_id: cartId || '',
+        floor: cart.floor || '',
+        device_type: cart.device_type || '',
+        device_number: String(devNum),
+        device_brand: '',
+        device_serial: '',
+        reserved_by: currentUser.name || '',
+        reserved_email: currentUser.email || '',
+        date: date || '',
+        period: period || '',
+        status: 'active',
+        notification_sent: ''
+      });
+    }
+  }
+
+  // Suppress intermediate re-renders during batch operation
+  window.dataSdk.beginBatch();
+  
   let successCount = 0;
   let errorCount = 0;
   
   try {
-    for (const period of periods) {
-      for (const devNum of selectedDevices) {
-        const reservation = {
-          type: 'reservation',
-          cart_name: cart.cart_name || '',
-          cart_id: cartId || '',
-          floor: cart.floor || '',
-          device_type: cart.device_type || '',
-          device_number: String(devNum),
-          device_brand: '',
-          device_serial: '',
-          reserved_by: currentUser.name || '',
-          reserved_email: currentUser.email || '',
-          date: date || '',
-          period: period || '',
-          status: 'active',
-          created_at: new Date().toISOString(),
-          notification_sent: '',
-          name: '',
-          email: '',
-          password: '',
-          role: '',
-          phone: '',
-          user_status: ''
-        };
-        
-        const result = await window.dataSdk.create(reservation);
-        if (result.isOk) {
-          successCount++;
-        } else {
-          errorCount++;
-          console.error('Erro ao criar reserva:', result.error);
-        }
-      }
+    // Single batch insert instead of N sequential creates
+    const result = await window.dataSdk.createBatch(reservations);
+    if (result.isOk) {
+      successCount = result.count || 0;
+    } else {
+      errorCount = reservations.length;
     }
   } catch (err) {
     console.error('Erro no processo:', err);
-    errorCount++;
+    errorCount = reservations.length;
   }
 
+  // Re-enable re-renders with a single update
+  window.dataSdk.endBatch();
 
   isLoading = false;
   
@@ -820,7 +820,6 @@ async function proceedWithReservation(cartId, date, periods, cart) {
   }
   
   if (successCount > 0) {
-    // BUG-3: diferenciar sucesso total de falha parcial
     if (errorCount === 0) {
       toast(`✅ ${successCount} reserva(s) criada(s) com sucesso!`);
     } else {
@@ -838,8 +837,8 @@ async function proceedWithReservation(cartId, date, periods, cart) {
 
     updateDeviceGrid();
 
-    // Navigate to "Minhas Reservas" after delay
-    setTimeout(() => navigate('minhas'), 1500);
+    // Navigate immediately — removed artificial 1.5s delay
+    navigate('minhas');
   } else {
     toast('❌ Erro ao criar reservas. Tente novamente.', 'error');
   }
@@ -933,6 +932,7 @@ async function cancelGroup(ids) {
   if (isLoading) return;
   isLoading = true;
   const arr = ids.split(',');
+  window.dataSdk.beginBatch();
   let hasError = false;
   for (const id of arr) {
     const rec = allData.find(d => d.__backendId === id);
@@ -941,8 +941,8 @@ async function cancelGroup(ids) {
       if (!result.isOk) hasError = true;
     }
   }
+  window.dataSdk.endBatch();
   isLoading = false;
-  // ERROR-1: só confirmar sucesso se a operação realmente completou
   if (hasError) {
     toast('⚠️ Erro ao cancelar uma ou mais reservas.', 'error');
   } else {
@@ -1017,6 +1017,7 @@ function showFinalizeModal(ids) {
     modal.remove();
     
     isLoading = true;
+    window.dataSdk.beginBatch();
     for (const id of arr) {
       const rec = allData.find(d => d.__backendId === id);
       if (rec) {
@@ -1024,9 +1025,10 @@ function showFinalizeModal(ids) {
         await window.dataSdk.update(updated);
       }
     }
+    window.dataSdk.endBatch();
     isLoading = false;
     toast('✅ Reserva finalizada com sucesso!');
-    setTimeout(() => navigate('minhas'), 1000);
+    navigate('minhas');
   };
   
   modal.onclick = (e) => {
@@ -1967,10 +1969,12 @@ async function adminFinalizeReservation(idsStr) {
   if (isLoading) return;
   isLoading = true;
   const ids = idsStr.split(',');
+  window.dataSdk.beginBatch();
   for (const id of ids) {
     const rec = allData.find(d => d.__backendId === id);
     if (rec) await window.dataSdk.update({ ...rec, status: 'completed' });
   }
+  window.dataSdk.endBatch();
   isLoading = false;
   toast('✅ Dispositivos liberados com sucesso!');
   navigate('gerenciar');
@@ -1980,15 +1984,16 @@ async function adminCancelReservation(idsStr) {
   if (isLoading) return;
   isLoading = true;
   const ids = idsStr.split(',');
+  window.dataSdk.beginBatch();
   let hasError = false;
   for (const id of ids) {
     const rec = allData.find(d => d.__backendId === id);
     if (rec) {
       const result = await window.dataSdk.delete(rec);
-      // ERROR-1: registrar falhas em vez de ignorar silenciosamente
       if (!result.isOk) hasError = true;
     }
   }
+  window.dataSdk.endBatch();
   isLoading = false;
   if (hasError) {
     toast('⚠️ Erro ao excluir uma ou mais reservas.', 'error');
