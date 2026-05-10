@@ -1774,16 +1774,24 @@ function renderMonitor(c) {
   const todayRes = getReservations().filter(r => r.date === today && r.status === 'active');
 
 
-  // Figure out current period
+  // Figure out current period by parsing time ranges from PERIODS strings
   const now = new Date();
   const h = now.getHours(), m = now.getMinutes();
   const mins = h * 60 + m;
   let currentPeriod = '';
-  const timemap = [
-    [420,470],[470,520],[520,570],[570,590],[590,640],[640,690],
-    [780,830],[830,880],[880,930],[930,950],[950,1000],[1000,1050]
-  ];
-  timemap.forEach((t,i) => { if (mins >= t[0] && mins < t[1]) currentPeriod = PERIODS[i]; });
+  // Dynamically extract (HH:MM-HH:MM) from each PERIODS entry
+  const periodRegex = /\((\d{2}):(\d{2})-(\d{2}):(\d{2})\)/;
+  for (let i = 0; i < PERIODS.length; i++) {
+    const match = PERIODS[i].match(periodRegex);
+    if (match) {
+      const start = parseInt(match[1]) * 60 + parseInt(match[2]);
+      const end   = parseInt(match[3]) * 60 + parseInt(match[4]);
+      if (mins >= start && mins < end) {
+        currentPeriod = PERIODS[i];
+        break;
+      }
+    }
+  }
 
 
   c.innerHTML = `
