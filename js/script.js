@@ -4,6 +4,8 @@ let currentUser = null;
 let currentView = 'reservar';
 let isLoading = false;
 let isFormOpen = false;
+// Período selecionado na tela de Monitoramento. `null` = seguir o relógio (modo "ao vivo").
+let selectedMonitorPeriod = null;
 
 // ========== SUPABASE AUTH ==========
 /** Check if Supabase mode is active (dataSdk using Supabase vs Express API) */
@@ -435,6 +437,9 @@ function buildNav() {
 
 
 function navigate(view) {
+  // Ao trocar de aba, sempre voltamos o Monitoramento ao modo "ao vivo".
+  // Assim o usuário não fica preso a um período antigo se sair e voltar à tela.
+  selectedMonitorPeriod = null;
   currentView = view;
   buildNav();
   renderCurrentView();
@@ -1776,34 +1781,117 @@ function renderMonitor(c) {
   const todayRes = getReservations().filter(r => r.date === today && r.status === 'active');
 
 
-  // Figure out current period by parsing time ranges from PERIODS strings
+  // Figure out current period — derived dynamically from PERIODS strings
+  // so it stays correct when the school customizes its schedule via the
+  // "Horários" admin panel. Each period label is expected to contain a
+  // (HH:MM-HH:MM) range; periods without that pattern are skipped.
   const now = new Date();
-  const h = now.getHours(), m = now.getMinutes();
-  const mins = h * 60 + m;
+  const mins = now.getHours() * 60 + now.getMinutes();
   let currentPeriod = '';
-  // Dynamically extract (HH:MM-HH:MM) from each PERIODS entry
-  const periodRegex = /\((\d{2}):(\d{2})-(\d{2}):(\d{2})\)/;
-  for (let i = 0; i < PERIODS.length; i++) {
-    const match = PERIODS[i].match(periodRegex);
-    if (match) {
-      const start = parseInt(match[1]) * 60 + parseInt(match[2]);
-      const end   = parseInt(match[3]) * 60 + parseInt(match[4]);
-      if (mins >= start && mins < end) {
-        currentPeriod = PERIODS[i];
-        break;
-      }
+  for (const period of PERIODS) {
+    const m = period.match(/\((\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\)/);
+    if (!m) continue;
+    const startMins = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+    const endMins   = parseInt(m[3], 10) * 60 + parseInt(m[4], 10);
+    if (mins >= startMins && mins < endMins) {
+      currentPeriod = period;
+      break;
     }
   }
+
+  // Período exibido — segue o relógio se o usuário não escolheu outro.
+  // Se o período selecionado não existir mais (ex: admin removeu horários),
+  // fazemos fallback gracioso para o período atual.
+  const validSelected = selectedMonitorPeriod && PERIODS.includes(selectedMonitorPeriod)
+    ? selectedMonitorPeriod : null;
+  const displayPeriod = validSelected || currentPeriod;
+  const isLive = !!currentPeriod && displayPeriod === currentPeriod;
+
+  // Helpers visuais p/ chips da timeline.
+  function shortLabel(p) {
+    if (p.startsWith('Intervalo')) return 'Int.';
+    const m = p.match(/^(\d+)/);
+    return m ? m[1] + 'º' : p.slice(0, 4);
+  }
+  function timeRange(p) {
+    const m = p.match(/\((\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})\)/);
+    return m ? m[1] + '–' + m[2] : '';
+  }
+
+  // Contagem de reservas por período (para o pontinho indicador nos chips).
+  const resByPeriod = {};
+  todayRes.forEach(r => { resByPeriod[r.period] = (resByPeriod[r.period] || 0) + 1; });
+
+  // Timeline horizontal — uma "chip" por período no dia.
+  const timelineHtml = PERIODS.map((p, i) => {
+    const isCurrent = p === currentPeriod;
+    const isSelected = p === displayPeriod;
+    const isInterval = p.startsWith('Intervalo');
+    const count = resByPeriod[p] || 0;
+
+    if (isInterval) {
+      // Intervalos: separador visual, não clicáveis (não recebem reservas na prática).
+      return `
+        <div class="flex-shrink-0 flex flex-col items-center justify-center px-2 py-2 text-slate-500 select-none" title="${p}">
+          <span class="text-[10px] uppercase tracking-wider">int.</span>
+          <span class="text-[10px] text-slate-600">${timeRange(p)}</span>
+        </div>`;
+    }
+
+    const baseCls = 'flex-shrink-0 flex flex-col items-center px-3 py-1.5 rounded-lg transition cursor-pointer border min-w-[62px]';
+    let cls = 'border-slate-700 bg-slate-800/40 text-slate-300 hover:bg-slate-700/60';
+    if (isSelected && isCurrent) {
+      cls = 'border-emerald-400 bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/60';
+    } else if (isSelected) {
+      cls = 'border-blue-400 bg-blue-500/20 text-blue-100 ring-1 ring-blue-400/60';
+    } else if (isCurrent) {
+      cls = 'border-emerald-500/50 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20';
+    }
+
+    const dot = count > 0
+      ? `<span class="mt-0.5 w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-white' : (isCurrent ? 'bg-emerald-300' : 'bg-blue-400')}"></span>`
+      : '<span class="mt-0.5 w-1.5 h-1.5"></span>';
+
+    return `
+      <button onclick="setMonitorPeriodByIndex(${i})" class="${baseCls} ${cls}" title="${p}${count?' — '+count+' reserva(s)':''}">
+        <span class="font-semibold text-xs leading-tight">${shortLabel(p)}</span>
+        <span class="text-[10px] opacity-70 leading-tight">${timeRange(p)}</span>
+        ${dot}
+      </button>`;
+  }).join('');
 
 
   c.innerHTML = `
     <div class="fade-in max-w-6xl mx-auto">
-      <div class="flex items-center justify-between mb-6">
+      <div class="flex items-center justify-between mb-4">
         <div>
           <h2 class="text-xl font-bold flex items-center gap-2"><i data-lucide="activity" style="width:22px;height:22px;color:#3b82f6"></i> Monitoramento em Tempo Real</h2>
-          <p class="text-slate-400 text-sm">${new Date().toLocaleDateString('pt-BR')} ${currentPeriod ? '— '+currentPeriod : ''}</p>
+          <p class="text-slate-400 text-sm">
+            ${new Date().toLocaleDateString('pt-BR')}
+            ${displayPeriod ? '— '+displayPeriod : ''}
+            ${displayPeriod ? (isLive
+                ? '<span class="ml-2 text-[10px] uppercase tracking-wider bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded">Agora</span>'
+                : '<span class="ml-2 text-[10px] uppercase tracking-wider bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded">Pré-visualização</span>'
+              ) : ''}
+          </p>
         </div>
         <span class="flex items-center gap-1 text-xs text-emerald-400"><span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot inline-block"></span> Online</span>
+      </div>
+
+      <!-- TIMELINE: mapa do dia inteiro -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-3 mb-6">
+        <div class="flex items-center justify-between mb-2 px-1 flex-wrap gap-2">
+          <span class="text-xs text-slate-400 font-medium">Mapa do dia — clique em uma aula para visualizar a ocupação</span>
+          ${!isLive && currentPeriod ? '<button onclick="monitorGoLive()" class="text-xs bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 px-3 py-1 rounded-lg flex items-center gap-1 transition"><i data-lucide="radio" style="width:12px;height:12px"></i> Voltar para Agora</button>' : ''}
+        </div>
+        <div class="flex items-stretch gap-1.5 overflow-x-auto pb-1">
+          ${timelineHtml}
+        </div>
+        <div class="flex items-center gap-3 text-[10px] text-slate-500 mt-2 px-1 flex-wrap">
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-emerald-500/40 border border-emerald-400"></span> aula atual</span>
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-blue-500/40 border border-blue-400"></span> selecionado</span>
+          <span class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-blue-400"></span> tem reservas</span>
+        </div>
       </div>
 
 
@@ -1817,8 +1905,8 @@ function renderMonitor(c) {
           <p class="text-2xl font-bold text-white">${new Set(todayRes.map(r=>r.cart_name)).size}/${carts.length}</p>
         </div>
         <div class="stat-card border border-slate-800 rounded-xl p-4">
-          <p class="text-xs text-slate-400">Dispositivos em Uso</p>
-          <p class="text-2xl font-bold text-white">${currentPeriod ? todayRes.filter(r=>r.period===currentPeriod).length : 0}</p>
+          <p class="text-xs text-slate-400">${isLive ? 'Dispositivos em Uso' : 'Reservas no período'}</p>
+          <p class="text-2xl font-bold text-white">${displayPeriod ? todayRes.filter(r=>r.period===displayPeriod).length : 0}</p>
         </div>
         <div class="stat-card border border-slate-800 rounded-xl p-4">
           <p class="text-xs text-slate-400">Professores</p>
@@ -1828,24 +1916,23 @@ function renderMonitor(c) {
 
 
       ${carts.map(ct => {
-        const cartRes = todayRes.filter(r => r.cart_name === ct.cart_name && (currentPeriod ? r.period === currentPeriod : true));
+        const cartRes = todayRes.filter(r => r.cart_name === ct.cart_name && (displayPeriod ? r.period === displayPeriod : true));
         const reservedNums = new Set(cartRes.map(r => r.device_number));
         return `
         <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 mb-4">
           <div class="flex items-center justify-between mb-3">
             <h3 class="font-semibold text-white">${ct.cart_name} <span class="text-slate-400 text-xs font-normal">${ct.floor} — ${ct.device_type}</span></h3>
-            <span class="text-xs text-slate-400">${reservedNums.size}/40 em uso</span>
+            <span class="text-xs text-slate-400">${reservedNums.size}/40 ${isLive ? 'em uso' : 'reservados'}</span>
           </div>
           <div class="grid grid-cols-8 sm:grid-cols-10 gap-1">
             ${Array.from({length:40},(_,i)=>i+1).map(n => {
-              // BUG-2: device_number vem como string das reservas; comparar com parseInt
               const res = cartRes.find(r=>parseInt(r.device_number)===n);
               return `<div class="rounded-lg p-1 text-center text-xs ${res?'bg-red-500/20 text-red-400 border border-red-500/30':'bg-blue-500/10 text-blue-400/60 border border-slate-800'}" title="${res?res.reserved_by+' — '+res.period:ct.device_type+' #'+n+' disponível'}">${n}</div>`;
             }).join('')}
           </div>
           ${cartRes.length > 0 ? `
           <div class="mt-3 border-t border-slate-800 pt-3">
-            <p class="text-xs text-slate-400 mb-2">Em uso agora:</p>
+            <p class="text-xs text-slate-400 mb-2">${isLive ? 'Em uso agora:' : 'Reservas neste período:'}</p>
             <div class="space-y-1">
               ${[...new Set(cartRes.map(r=>r.reserved_email))].map(email => {
                 const userRes = cartRes.filter(r=>r.reserved_email===email);
@@ -1860,6 +1947,22 @@ function renderMonitor(c) {
       }).join('')}
     </div>
   `;
+}
+
+
+// Trocar o período exibido no Monitoramento. Usamos índice em PERIODS p/
+// evitar problemas de escape no `onclick` (os rótulos contêm parênteses).
+function setMonitorPeriodByIndex(i) {
+  const p = PERIODS[i];
+  if (!p) return;
+  selectedMonitorPeriod = p;
+  renderCurrentView();
+}
+
+// Voltar ao modo "tempo real": volta a seguir o relógio.
+function monitorGoLive() {
+  selectedMonitorPeriod = null;
+  renderCurrentView();
 }
 
 
