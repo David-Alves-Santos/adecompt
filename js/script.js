@@ -1927,7 +1927,7 @@ function renderMonitor(c) {
           <div class="grid grid-cols-8 sm:grid-cols-10 gap-1">
             ${Array.from({length:40},(_,i)=>i+1).map(n => {
               const res = cartRes.find(r=>parseInt(r.device_number)===n);
-              return `<div class="rounded-lg p-1 text-center text-xs ${res?'bg-red-500/20 text-red-400 border border-red-500/30':'bg-blue-500/10 text-blue-400/60 border border-slate-800'}" title="${res?res.reserved_by+' — '+res.period:ct.device_type+' #'+n+' disponível'}">${n}</div>`;
+              return `<button onclick="showDeviceSchedule('${ct.cart_name}', ${n})" class="rounded-lg p-1 text-center text-xs cursor-pointer transition ${res?'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30':'bg-blue-500/10 text-blue-400/60 border border-slate-800 hover:bg-blue-500/20 hover:text-blue-300'}" title="Ver agenda — ${ct.device_type} #${n}">${n}</button>`;
             }).join('')}
           </div>
           ${cartRes.length > 0 ? `
@@ -1963,6 +1963,74 @@ function setMonitorPeriodByIndex(i) {
 function monitorGoLive() {
   selectedMonitorPeriod = null;
   renderCurrentView();
+}
+
+// Exibe um modal com a agenda completa do dia para um dispositivo específico.
+// Mostra todos os períodos (exceto intervalos) e se estão livres ou reservados.
+function showDeviceSchedule(cartName, deviceNum) {
+  const today = todayStr();
+  const allRes = getReservations().filter(r =>
+    r.date === today &&
+    r.status === 'active' &&
+    r.cart_name === cartName &&
+    parseInt(r.device_number) === deviceNum
+  );
+
+  // Mapa período -> reserva para lookup rápido
+  const resByPeriod = {};
+  allRes.forEach(r => { resByPeriod[r.period] = r; });
+
+  const periodsHtml = PERIODS.map(p => {
+    if (p.startsWith('Intervalo')) {
+      return `<div class="text-[10px] text-slate-600 uppercase tracking-wider py-1 px-2">${p}</div>`;
+    }
+    const res = resByPeriod[p];
+    return `
+      <div class="flex items-center justify-between rounded-lg px-3 py-2 ${res ? 'bg-red-500/10 border border-red-500/20' : 'bg-slate-800/50 border border-slate-700/50'}">
+        <span class="text-xs text-slate-300">${p}</span>
+        ${res
+          ? `<span class="text-xs text-red-300 font-medium" title="${res.reserved_by}">${res.reserved_by.split(' ')[0]}</span>`
+          : `<span class="text-xs text-emerald-400">Livre</span>`
+        }
+      </div>`;
+  }).join('');
+
+  // Remove modal anterior se existir
+  const existing = document.getElementById('device-schedule-modal');
+  if (existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'device-schedule-modal';
+  modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+  modal.innerHTML = `
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeDeviceModal()"></div>
+    <div class="relative bg-slate-900 border border-slate-700 rounded-2xl p-5 w-full max-w-sm shadow-2xl">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h3 class="font-bold text-white">Computador #${deviceNum}</h3>
+          <p class="text-xs text-slate-400">${cartName} — agenda do dia</p>
+        </div>
+        <button onclick="closeDeviceModal()" class="text-slate-400 hover:text-white transition">
+          <i data-lucide="x" style="width:18px;height:18px"></i>
+        </button>
+      </div>
+      <div class="space-y-1.5 max-h-80 overflow-y-auto pr-1">
+        ${periodsHtml}
+      </div>
+      <div class="flex items-center gap-3 mt-4 text-[10px] text-slate-500">
+        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-red-500/30 border border-red-500/40"></span> reservado</span>
+        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-slate-800 border border-slate-700"></span> livre</span>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  lucide.createIcons();
+}
+
+// Fecha o modal de agenda do dispositivo.
+function closeDeviceModal() {
+  const modal = document.getElementById('device-schedule-modal');
+  if (modal) modal.remove();
 }
 
 
@@ -2226,4 +2294,4 @@ function exportCSV() {
 
 // Init icons
 document.addEventListener('DOMContentLoaded', () => { lucide.createIcons(); });
-tailwind.config={theme:{extend:{}}}
+tailwind.config={theme:{extend:{}}} 
