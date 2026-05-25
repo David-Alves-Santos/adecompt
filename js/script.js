@@ -1976,7 +1976,6 @@ function showDeviceSchedule(cartName, deviceNum) {
     parseInt(r.device_number) === deviceNum
   );
 
-  // Mapa período -> reserva para lookup rápido
   const resByPeriod = {};
   allRes.forEach(r => { resByPeriod[r.period] = r; });
 
@@ -1995,7 +1994,6 @@ function showDeviceSchedule(cartName, deviceNum) {
       </div>`;
   }).join('');
 
-  // Remove modal anterior se existir
   const existing = document.getElementById('device-schedule-modal');
   if (existing) existing.remove();
 
@@ -2294,68 +2292,4 @@ function exportCSV() {
 
 // Init icons
 document.addEventListener('DOMContentLoaded', () => { lucide.createIcons(); });
-tailwind.config={theme:{extend:{}}}          <div class="space-y-2">
-            ${topPeriods.map(([p,count]) => `
-              <div class="flex items-center gap-2">
-                <span class="text-xs text-slate-400 w-40 truncate flex-shrink-0">${p.split('(')[0].trim()}</span>
-                <div class="flex-1 bg-slate-800 rounded-full h-4 overflow-hidden">
-                  <div class="bg-blue-500 h-full rounded-full" style="width:${(count/maxPeriod)*100}%"></div>
-                </div>
-                <span class="text-xs text-slate-300 w-8 text-right">${count}</span>
-              </div>
-            `).join('')}
-            ${topPeriods.length===0?'<p class="text-sm text-slate-500">Sem dados.</p>':''}
-          </div>
-        </div>
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-          <h3 class="font-semibold text-white text-sm mb-3">Top Professores</h3>
-          <div class="space-y-2">
-            ${topUsers.map(([email,count],i) => {
-              const res = thisMonth.find(r=>r.reserved_email===email);
-              return `<div class="flex items-center justify-between text-sm bg-slate-800/50 rounded-lg px-3 py-2">
-                <span class="text-white"><span class="text-slate-500 mr-2">${i+1}.</span>${res?.reserved_by||email}</span>
-                <span class="text-blue-400 text-xs font-medium">${count} reservas</span>
-              </div>`;
-            }).join('')}
-            ${topUsers.length===0?'<p class="text-sm text-slate-500">Sem dados.</p>':''}
-          </div>
-        </div>
-      </div>
-
-
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-        <h3 class="font-semibold text-white text-sm mb-3">Uso por Carrinho</h3>
-        <div class="grid gap-3 sm:grid-cols-2">
-          ${topCarts.map(([name,count]) => `
-            <div class="flex items-center justify-between bg-slate-800/50 rounded-lg px-4 py-3">
-              <span class="text-white text-sm">${name}</span>
-              <span class="text-blue-400 text-sm font-medium">${count} reservas</span>
-            </div>
-          `).join('')}
-          ${topCarts.length===0?'<p class="text-sm text-slate-500 col-span-2 text-center">Sem dados.</p>':''}
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-
-function exportCSV() {
-  const reservations = getReservations();
-  if (reservations.length === 0) { toast('Sem dados para exportar.','error'); return; }
-  let csv = 'Data,Carrinho,Andar,Tipo,Dispositivo,Professor,Email,Horário,Status\n';
-  reservations.forEach(r => {
-    csv += `${r.date},"${r.cart_name}","${r.floor}",${r.device_type},${r.device_number},"${r.reserved_by}",${r.reserved_email},"${r.period}",${r.status}\n`;
-  });
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'relatorio_reservas.csv'; a.click();
-  URL.revokeObjectURL(url);
-  toast('Relatório exportado!');
-}
-
-
-// Init icons
-document.addEventListener('DOMContentLoaded', () => { lucide.createIcons(); });
-tailwind.config={theme:{extend:{}}}}}
+tailwind.config={theme:{extend:{}}}
