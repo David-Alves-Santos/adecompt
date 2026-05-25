@@ -1265,7 +1265,7 @@ function renderCarrinhos(c) {
                 <button onclick="showAddDeviceForm('${ct.__backendId}')" class="px-3 py-1 text-xs bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded-lg transition flex items-center gap-1">
                   <i data-lucide="plus" style="width:12px;height:12px"></i> Adicionar Dispositivo
                 </button>
-                <button onclick="deleteCart('${ct.__backendId}')" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
+                <button onclick="confirmDeleteCart('${ct.__backendId}')" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
                   <i data-lucide="trash-2" style="width:16px;height:16px"></i>
                 </button>
               </div>
@@ -1427,6 +1427,66 @@ async function saveDevice(cartId) {
   });
   if (r.isOk) { toast('Dispositivo adicionado na posição #'+deviceNumber+'!'); document.getElementById(`add-device-form-${cartId}`).innerHTML=''; }
   else toast('Erro ao salvar.','error');
+}
+
+
+// Exige que o usuário digite o nome do carrinho antes de excluir,
+// evitando exclusões acidentais (padrão GitHub).
+function confirmDeleteCart(id) {
+  const cartName = getCarts().find(ct => ct.__backendId === id)?.cart_name || 'carrinho';
+  const existing = document.getElementById('delete-cart-modal');
+  if (existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'delete-cart-modal';
+  modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+  modal.innerHTML = `
+    <div class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+    <div class="relative bg-slate-900 border border-red-500/40 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0">
+          <i data-lucide="triangle-alert" style="width:20px;height:20px;color:#ef4444"></i>
+        </div>
+        <div>
+          <h3 class="font-bold text-white text-lg">Excluir carrinho?</h3>
+          <p class="text-xs text-slate-400">Esta ação não pode ser desfeita</p>
+        </div>
+      </div>
+
+      <div class="bg-red-500/10 border border-red-500/20 rounded-xl p-4 mb-5 text-sm text-red-300 space-y-1">
+        <p>Ao excluir <span class="font-semibold text-white">${cartName}</span>, você perderá:</p>
+        <ul class="list-disc list-inside text-xs text-red-300/80 mt-2 space-y-0.5">
+          <li>Todos os dispositivos cadastrados neste carrinho</li>
+          <li>Todo o histórico de reservas associado</li>
+        </ul>
+      </div>
+
+      <label class="block text-sm text-slate-300 mb-2">
+        Para confirmar, digite o nome do carrinho:
+        <span class="font-mono text-white bg-slate-800 px-1.5 py-0.5 rounded text-xs ml-1">${cartName}</span>
+      </label>
+      <input id="delete-cart-confirm-input" type="text" placeholder="Digite o nome exato..."
+        class="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500 mb-5
+               focus:outline-none focus:border-red-500 transition"
+        oninput="document.getElementById('delete-cart-btn').disabled = this.value !== '${cartName}'">
+
+      <div class="flex gap-3">
+        <button onclick="document.getElementById('delete-cart-modal').remove()"
+          class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition">
+          Cancelar
+        </button>
+        <button id="delete-cart-btn" disabled
+          onclick="document.getElementById('delete-cart-modal').remove(); deleteCart('${id}')"
+          class="flex-1 px-4 py-2 bg-red-600 text-white font-medium rounded-lg transition
+                 disabled:opacity-30 disabled:cursor-not-allowed hover:enabled:bg-red-700">
+          Excluir permanentemente
+        </button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  lucide.createIcons();
+  setTimeout(() => document.getElementById('delete-cart-confirm-input')?.focus(), 50);
 }
 
 
