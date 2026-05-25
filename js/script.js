@@ -496,6 +496,12 @@ function renderReservar(c) {
       </div>
 
 
+      <div class="mb-6">
+        <label class="block text-sm font-medium text-slate-300 mb-1">Turma <span class="text-slate-500 font-normal text-xs">(obrigatório)</span></label>
+        <input type="text" id="sel-turma" placeholder="Ex: 9ºA, 8ºB, 7ºC..." maxlength="20"
+          class="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition">
+      </div>
+
       <div>
         <label class="block text-sm font-medium text-slate-300 mb-2">Horários</label>
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 mb-6" id="period-checks">
@@ -661,7 +667,7 @@ function updateConfirmBtn() {
 }
 
 
-function showConfirmationModal(cartId, date, periods, cart) {
+function showConfirmationModal(cartId, date, periods, cart, turma) {
   if (!cart || periods.length === 0 || selectedDevices.size === 0) return;
 
 
@@ -694,6 +700,10 @@ function showConfirmationModal(cartId, date, periods, cart) {
         <div class="flex justify-between text-sm">
           <span class="text-slate-400">Dispositivos:</span>
           <span class="text-blue-400 font-medium">${[...selectedDevices].sort((a,b)=>a-b).map(d=>'#'+d).join(', ')}</span>
+        </div>
+        <div class="flex justify-between text-sm">
+          <span class="text-slate-400">Turma:</span>
+          <span class="text-white font-medium">${turma || '—'}</span>
         </div>
         <div class="flex justify-between text-sm">
           <span class="text-slate-400">Horários:</span>
@@ -738,7 +748,7 @@ function showConfirmationModal(cartId, date, periods, cart) {
     e.stopPropagation();
     modal.remove();
     // isLoading já está true; proceedWithReservation vai gerenciá-lo daqui
-    proceedWithReservation(cartId, date, periods, cart);
+    proceedWithReservation(cartId, date, periods, cart, turma);
   };
 
   modal.onclick = (e) => {
@@ -750,7 +760,7 @@ function showConfirmationModal(cartId, date, periods, cart) {
 }
 
 
-async function proceedWithReservation(cartId, date, periods, cart) {
+async function proceedWithReservation(cartId, date, periods, cart, turma) {
   // isLoading já foi setado como true em confirmReservation() antes de abrir o modal.
   // Esta guarda cobre chamadas diretas eventuais.
   if (!isLoading) isLoading = true;
@@ -784,6 +794,7 @@ async function proceedWithReservation(cartId, date, periods, cart) {
         device_number: String(devNum),
         device_brand: '',
         device_serial: '',
+        turma: turma || '',
         reserved_by: currentUser.name || '',
         reserved_email: currentUser.email || '',
         date: date || '',
@@ -864,6 +875,7 @@ function confirmReservation() {
 
   const cartId = cartIdEl.value;
   const date = dateEl.value;
+  const turma = (document.getElementById('sel-turma')?.value || '').trim();
   const periods = [...document.querySelectorAll('.period-cb:checked')].map(cb => cb.value);
   const cart = getCarts().find(ct => ct.__backendId === cartId);
 
@@ -874,6 +886,7 @@ function confirmReservation() {
   if (!date) { toast('Selecione uma data.', 'error'); return; }
   if (periods.length === 0) { toast('Selecione pelo menos um horário.', 'error'); return; }
   if (selectedDevices.size === 0) { toast('Selecione pelo menos um dispositivo.', 'error'); return; }
+  if (!turma) { toast('Informe a turma antes de confirmar.', 'error'); return; }
 
 
   // Check limit
@@ -888,7 +901,7 @@ function confirmReservation() {
   isLoading = true;
 
   // Show confirmation modal
-  showConfirmationModal(cartId, date, periods, cart);
+  showConfirmationModal(cartId, date, periods, cart, turma);
 }
 
 
@@ -1936,8 +1949,9 @@ function renderMonitor(c) {
             <div class="space-y-1">
               ${[...new Set(cartRes.map(r=>r.reserved_email))].map(email => {
                 const userRes = cartRes.filter(r=>r.reserved_email===email);
+                const turmaTag = userRes[0].turma ? `<span class="ml-1.5 text-[10px] bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded">${userRes[0].turma}</span>` : '';
                 return `<div class="flex items-center justify-between text-xs bg-slate-800/50 rounded-lg px-3 py-2">
-                  <span class="text-white">${userRes[0].reserved_by}</span>
+                  <span class="text-white flex items-center gap-1">${userRes[0].reserved_by}${turmaTag}</span>
                   <span class="text-slate-400">Dispositivos: ${userRes.map(r=>'#'+r.device_number).join(', ')}</span>
                 </div>`;
               }).join('')}
@@ -1988,7 +2002,7 @@ function showDeviceSchedule(cartName, deviceNum) {
       <div class="flex items-center justify-between rounded-lg px-3 py-2 ${res ? 'bg-red-500/10 border border-red-500/20' : 'bg-slate-800/50 border border-slate-700/50'}">
         <span class="text-xs text-slate-300">${p}</span>
         ${res
-          ? `<span class="text-xs text-red-300 font-medium" title="${res.reserved_by}">${res.reserved_by.split(' ')[0]}</span>`
+          ? `<span class="text-xs text-red-300 font-medium" title="${res.reserved_by}">${res.reserved_by.split(' ')[0]}${res.turma ? ` · <span class='text-blue-300'>${res.turma}</span>` : ''}</span>`
           : `<span class="text-xs text-emerald-400">Livre</span>`
         }
       </div>`;
