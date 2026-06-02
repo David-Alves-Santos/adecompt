@@ -1823,19 +1823,39 @@ async function toggleUserStatus(id, isCurrentlyActive) {
   if (!user) return;
   
   const newStatus = isCurrentlyActive ? 'inativo' : 'ativo';
-  const updatedUser = {
-    ...user,
-    user_status: newStatus
-  };
 
+  // Tenta via dataSdk.update primeiro
+  if (!isSupabaseMode()) {
+    const updatedUser = { ...user, user_status: newStatus };
+    const r = await window.dataSdk.update(updatedUser);
+    if (r.isOk) {
+      const msg = newStatus === 'ativo' ? 'Usuário reativado!' : 'Usuário desativado! (histórico preservado)';
+      toast(msg);
+      navigate('usuarios');
+    } else {
+      toast('Erro ao atualizar status.','error');
+    }
+    return;
+  }
 
-  const r = await window.dataSdk.update(updatedUser);
-  if (r.isOk) {
+  // Supabase mode: fallback direto na tabela profiles
+  try {
+    const supabase = getSupabaseClient();
+    const { error } = await supabase
+      .from('profiles')
+      .update({ user_status: newStatus })
+      .eq('id', id);
+    if (error) {
+      console.error('Erro toggleUserStatus (supabase):', error);
+      toast('Erro ao atualizar status.', 'error');
+      return;
+    }
     const msg = newStatus === 'ativo' ? 'Usuário reativado!' : 'Usuário desativado! (histórico preservado)';
     toast(msg);
     navigate('usuarios');
-  } else {
-    toast('Erro ao atualizar status.','error');
+  } catch (err) {
+    console.error('Erro toggleUserStatus:', err);
+    toast('Erro ao atualizar status.', 'error');
   }
 }
 
@@ -1862,8 +1882,8 @@ function editUser(id) {
           <input id="edit-user-phone" type="tel" value="${user.phone || ''}" placeholder="(11) 99999-9999" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
         </div>
         <div>
-          <label class="block text-xs text-slate-400 mb-1">Senha</label>
-          <input id="edit-user-pass" type="text" value="${user.password}" placeholder="Senha" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
+          <label class="block text-xs text-slate-400 mb-1">Nova Senha <span class="text-slate-500">(opcional)</span></label>
+          <input id="edit-user-pass" type="text" value="" placeholder="Deixe em branco para não alterar" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
         </div>
         <div>
           <label class="block text-xs text-slate-400 mb-1">Perfil</label>
@@ -1906,29 +1926,63 @@ async function updateUser(id) {
   const status = document.getElementById('edit-user-status').value;
 
 
-  if (!name || !email || !pass) { 
-    toast('Preencha todos os campos.','error'); 
-    return; 
+  // Senha não é mais obrigatória na edição
+  if (!name || !email) {
+    toast('Preencha os campos obrigatórios.','error');
+    return;
   }
 
 
   // Check if email already exists for another user
   const existingEmail = getUsers().find(u => u.email === email && u.__backendId !== id);
-  if (existingEmail) { 
-    toast('E-mail já cadastrado por outro usuário.','error'); 
-    return; 
+  if (existingEmail) {
+    toast('E-mail já cadastrado por outro usuário.','error');
+    return;
   }
 
 
+  if (isSupabaseMode()) {
+    // Em Supabase mode, atualiza profile diretamente na tabela profiles
+    try {
+      const supabase = getSupabaseClient();
+      const { error } = await supabase
+        .from('profiles')
+        .update({ name, email, phone, role, user_status: status })
+        .eq('id', id);
+      if (error) {
+        console.error('Erro updateUser (supabase):', error);
+        toast('Erro ao atualizar.', 'error');
+        return;
+      }
+
+      // Se senha foi preenchida, avisar que deve ser redefinida via email
+      if (pass) {
+        toast('⚠️ Para alterar senhas, use a opção "Esqueci minha senha" na tela de login.', 'warning');
+      } else {
+        toast('Usuário atualizado com sucesso!');
+      }
+      document.getElementById('user-form-area').innerHTML = '';
+      navigate('usuarios');
+    } catch (err) {
+      console.error('Erro updateUser:', err);
+      toast('Erro ao atualizar.', 'error');
+    }
+    return;
+  }
+
+
+  // Legacy mode: salvar via dataSdk.update incluindo senha se fornecida
   const updatedUser = {
     ...user,
     name,
     email,
     phone,
-    password: pass,
     role,
     user_status: status
   };
+  if (pass) {
+    updatedUser.password = pass;
+  }
 
 
   const r = await window.dataSdk.update(updatedUser);
