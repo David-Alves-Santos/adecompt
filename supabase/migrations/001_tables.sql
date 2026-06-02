@@ -58,6 +58,7 @@ create table public.reservations (
   device_serial text not null default '',
   reserved_by text not null default '',
   reserved_email text not null default '',
+  turma text not null default '',
   date text not null default '',
   period text not null default '',
   status text not null default 'active' check (status in ('active', 'completed')),
