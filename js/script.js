@@ -1982,37 +1982,17 @@ async function toggleUserStatus(id, isCurrentlyActive) {
   
   const newStatus = isCurrentlyActive ? 'inativo' : 'ativo';
 
-  // Tenta via dataSdk.update primeiro
-  if (!isSupabaseMode()) {
-    const updatedUser = { ...user, user_status: newStatus };
-    const r = await window.dataSdk.update(updatedUser);
-    if (r.isOk) {
-      const msg = newStatus === 'ativo' ? 'Usuário reativado!' : 'Usuário desativado! (histórico preservado)';
-      toast(msg);
-      navigate('usuarios');
-    } else {
-      toast('Erro ao atualizar status.','error');
-    }
-    return;
-  }
-
-  // Supabase mode: fallback direto na tabela profiles
-  try {
-    const supabase = getSupabaseClient();
-    const { error } = await supabase
-      .from('profiles')
-      .update({ user_status: newStatus })
-      .eq('id', id);
-    if (error) {
-      console.error('Erro toggleUserStatus (supabase):', error);
-      toast('Erro ao atualizar status.', 'error');
-      return;
-    }
+  // Atualiza SEMPRE via dataSdk.update (Supabase e legacy). Assim o SDK detecta
+  // falha real de RLS via .select() e atualiza o cache local allData, fazendo a
+  // lista de usuários refletir o novo status na hora.
+  const updatedUser = { ...user, user_status: newStatus };
+  const r = await window.dataSdk.update(updatedUser);
+  if (r.isOk) {
     const msg = newStatus === 'ativo' ? 'Usuário reativado!' : 'Usuário desativado! (histórico preservado)';
     toast(msg);
     navigate('usuarios');
-  } catch (err) {
-    console.error('Erro toggleUserStatus:', err);
+  } else {
+    console.error('Erro toggleUserStatus:', r.error);
     toast('Erro ao atualizar status.', 'error');
   }
 }
@@ -2099,37 +2079,10 @@ async function updateUser(id) {
   }
 
 
-  if (isSupabaseMode()) {
-    // Em Supabase mode, atualiza profile diretamente na tabela profiles
-    try {
-      const supabase = getSupabaseClient();
-      const { error } = await supabase
-        .from('profiles')
-        .update({ name, email, phone, role, user_status: status })
-        .eq('id', id);
-      if (error) {
-        console.error('Erro updateUser (supabase):', error);
-        toast('Erro ao atualizar.', 'error');
-        return;
-      }
-
-      // Se senha foi preenchida, avisar que deve ser redefinida via email
-      if (pass) {
-        toast('⚠️ Para alterar senhas, use a opção "Esqueci minha senha" na tela de login.', 'warning');
-      } else {
-        toast('Usuário atualizado com sucesso!');
-      }
-      document.getElementById('user-form-area').innerHTML = '';
-      navigate('usuarios');
-    } catch (err) {
-      console.error('Erro updateUser:', err);
-      toast('Erro ao atualizar.', 'error');
-    }
-    return;
-  }
-
-
-  // Legacy mode: salvar via dataSdk.update incluindo senha se fornecida
+  // Atualiza SEMPRE via dataSdk.update (Supabase e legacy). O SDK usa
+  // .select().single(), então uma falha de RLS (0 linhas afetadas) vira erro
+  // real em vez de "sucesso" silencioso, e o cache local allData é atualizado
+  // na hora — fazendo a UI refletir a mudança imediatamente.
   const updatedUser = {
     ...user,
     name,
@@ -2138,19 +2091,25 @@ async function updateUser(id) {
     role,
     user_status: status
   };
-  if (pass) {
+  // Em Supabase mode a senha é gerenciada pelo Auth; só aplicamos no modo legacy.
+  if (pass && !isSupabaseMode()) {
     updatedUser.password = pass;
   }
 
-
   const r = await window.dataSdk.update(updatedUser);
-  if (r.isOk) {
-    toast('Usuário atualizado com sucesso!');
-    document.getElementById('user-form-area').innerHTML = '';
-    navigate('usuarios');
-  } else {
-    toast('Erro ao atualizar.','error');
+  if (!r.isOk) {
+    console.error('Erro updateUser:', r.error);
+    toast('Erro ao atualizar.', 'error');
+    return;
   }
+
+  if (pass && isSupabaseMode()) {
+    toast('⚠️ Para alterar senhas, use a opção "Esqueci minha senha" na tela de login.', 'warning');
+  } else {
+    toast('Usuário atualizado com sucesso!');
+  }
+  document.getElementById('user-form-area').innerHTML = '';
+  navigate('usuarios');
 }
 
 
