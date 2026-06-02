@@ -2634,4 +2634,514 @@ function renderRelatorio(c) {
           Object.entries(byCart).sort((a,b)=>b[1]-a[1]).map(([cart,count])=>{
             const pct = totalRes > 0 ? Math.round((count/totalRes)*100) : 0;
             return `<div class="mb-2">
-              <div class="flex justify-between text-x
+              <div class="flex justify-between text-xs mb-1">
+                <span class="text-slate-300">${cart}</span>
+                <span class="text-slate-400">${count} (${pct}%)</span>
+              </div>
+              <div class="w-full bg-slate-800 rounded-full h-1.5">
+                <div class="bg-emerald-500 h-1.5 rounded-full" style="width:${pct}%"></div>
+              </div>
+            </div>`;
+          }).join('')}
+      </div>
+    </div>
+  `;
+  lucide.createIcons();
+}
+
+// Fecha o modal de agenda do dispositivo.
+function closeDeviceModal() {
+  const modal = document.getElementById('device-schedule-modal');
+  if (modal) modal.remove();
+}
+
+
+// ========== ADMIN: GERENCIAR RESERVAS ==========
+function renderGerenciar(c) {
+  const reservations = getReservations().filter(r => r.status === 'active');
+  const today = todayStr();
+
+  // Group by date+cart+user for better readability
+  // Separate today vs future vs past
+  const past = reservations.filter(r => r.date < today).sort((a,b) => b.date.localeCompare(a.date));
+  const todayRes = reservations.filter(r => r.date === today);
+  const future = reservations.filter(r => r.date > today).sort((a,b) => a.date.localeCompare(b.date));
+
+  function groupReservations(list) {
+    const groups = {};
+    list.forEach(r => {
+      const key = `${r.date}|${r.cart_name}|${r.reserved_email}`;
+      if (!groups[key]) groups[key] = { date: r.date, cart: r.cart_name, floor: r.floor, user: r.reserved_by, email: r.reserved_email, devices: new Set(), periods: new Set(), ids: [] };
+      groups[key].devices.add(r.device_number);
+      groups[key].periods.add(r.period);
+      groups[key].ids.push(r.__backendId);
+    });
+    return Object.values(groups);
+  }
+
+  function renderGroup(groups, emptyMsg) {
+    if (groups.length === 0) return `<p class="text-sm text-slate-500 italic px-2">${emptyMsg}</p>`;
+    return groups.map(g => {
+      const dateObj = new Date(g.date + 'T12:00:00');
+      const dateStr = dateObj.toLocaleDateString('pt-BR');
+      const isPast = g.date < today;
+      return `
+        <div class="flex items-center justify-between bg-slate-800/60 border border-slate-700/50 rounded-xl px-4 py-3 gap-3">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-white text-sm font-medium truncate">${g.user}</span>
+              ${isPast ? '<span class="text-xs bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full">Vencida</span>' : ''}
+            </div>
+            <div class="text-xs text-slate-400 mt-0.5">${g.cart} · ${g.floor} · ${dateStr}</div>
+            <div class="text-xs text-slate-500 mt-0.5">
+              Disp: ${[...g.devices].sort((a,b)=>a-b).map(d=>'#'+d).join(', ')} &nbsp;·&nbsp; ${g.periods.size} período(s)
+            </div>
+          </div>
+          <div class="flex gap-2 flex-shrink-0">
+            <button onclick="adminFinalizeReservation('${g.ids.join(',')}')"
+              class="px-3 py-1.5 text-xs bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 rounded-lg transition flex items-center gap-1">
+              <i data-lucide="check" style="width:12px;height:12px"></i> Liberar
+            </button>
+            <button onclick="adminCancelReservation('${g.ids.join(',')}')"
+              class="px-3 py-1.5 text-xs bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition flex items-center gap-1">
+              <i data-lucide="trash-2" style="width:12px;height:12px"></i> Excluir
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  c.innerHTML = `
+    <div class="fade-in max-w-4xl mx-auto">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-xl font-bold flex items-center gap-2">
+            <i data-lucide="shield-check" style="width:22px;height:22px;color:#3b82f6"></i> Gerenciar Reservas
+          </h2>
+          <p class="text-slate-400 text-sm">Visualize e libere reservas de todos os usuários</p>
+        </div>
+        <span class="text-xs bg-blue-500/20 text-blue-400 px-3 py-1.5 rounded-full font-medium">${reservations.length} ativa(s)</span>
+      </div>
+
+      <div class="space-y-6">
+        <!-- VENCIDAS -->
+        ${past.length > 0 ? `
+        <div class="bg-slate-900 border border-amber-500/30 rounded-2xl p-5">
+          <h3 class="text-sm font-semibold text-amber-400 mb-3 flex items-center gap-2">
+            <i data-lucide="alert-triangle" style="width:16px;height:16px"></i>
+            Reservas Vencidas (${past.length} registro(s)) — dispositivos ainda não devolvidos
+          </h3>
+          <div class="space-y-2">${renderGroup(groupReservations(past), '')}</div>
+        </div>` : ''}
+
+        <!-- HOJE -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <h3 class="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+            <i data-lucide="calendar" style="width:16px;height:16px;color:#3b82f6"></i>
+            Hoje — ${new Date().toLocaleDateString('pt-BR')}
+          </h3>
+          <div class="space-y-2">${renderGroup(groupReservations(todayRes), 'Nenhuma reserva para hoje.')}</div>
+        </div>
+
+        <!-- FUTURAS -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <h3 class="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+            <i data-lucide="calendar-clock" style="width:16px;height:16px;color:#8b5cf6"></i>
+            Próximas reservas
+          </h3>
+          <div class="space-y-2">${renderGroup(groupReservations(future), 'Nenhuma reserva futura.')}</div>
+        </div>
+      </div>
+    </div>
+  `;
+  lucide.createIcons();
+}
+
+async function adminFinalizeReservation(idsStr) {
+  if (isLoading) return;
+  isLoading = true;
+  const ids = idsStr.split(',');
+  window.dataSdk.beginBatch();
+  for (const id of ids) {
+    const rec = allData.find(d => d.__backendId === id);
+    if (rec) await window.dataSdk.update({ ...rec, status: 'completed' });
+  }
+  window.dataSdk.endBatch();
+  isLoading = false;
+  toast('✅ Dispositivos liberados com sucesso!');
+  navigate('gerenciar');
+}
+
+async function adminCancelReservation(idsStr) {
+  if (isLoading) return;
+  isLoading = true;
+  const ids = idsStr.split(',');
+  window.dataSdk.beginBatch();
+  let hasError = false;
+  for (const id of ids) {
+    const rec = allData.find(d => d.__backendId === id);
+    if (rec) {
+      const result = await window.dataSdk.delete(rec);
+      if (!result.isOk) hasError = true;
+    }
+  }
+  window.dataSdk.endBatch();
+  isLoading = false;
+  if (hasError) {
+    toast('⚠️ Erro ao excluir uma ou mais reservas.', 'error');
+  } else {
+    toast('Reserva excluída.');
+    navigate('gerenciar');
+  }
+}
+
+// ========== ADMIN: RELATÓRIO ==========
+function renderRelatorio(c) {
+  const reservations = getReservations();
+  const today = todayStr();
+
+
+  // Stats
+  const thisMonth = reservations.filter(r => r.date && r.date.substring(0,7) === today.substring(0,7));
+  const byUser = {};
+  thisMonth.forEach(r => { byUser[r.reserved_email] = (byUser[r.reserved_email]||0)+1; });
+  const byCart = {};
+  thisMonth.forEach(r => { byCart[r.cart_name] = (byCart[r.cart_name]||0)+1; });
+  const byPeriod = {};
+  thisMonth.forEach(r => { byPeriod[r.period] = (byPeriod[r.period]||0)+1; });
+
+
+  const topUsers = Object.entries(byUser).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  const topCarts = Object.entries(byCart).sort((a,b)=>b[1]-a[1]);
+  const topPeriods = Object.entries(byPeriod).sort((a,b)=>b[1]-a[1]);
+
+
+  const maxPeriod = topPeriods.length > 0 ? topPeriods[0][1] : 1;
+
+
+  c.innerHTML = `
+    <div class="fade-in max-w-5xl mx-auto">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-xl font-bold flex items-center gap-2"><i data-lucide="bar-chart-2" style="width:22px;height:22px;color:#3b82f6"></i> Relatórios</h2>
+          <p class="text-slate-400 text-sm">Dados do mês atual</p>
+        </div>
+        <button onclick="exportCSV()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-xl transition flex items-center gap-1">
+          <i data-lucide="download" style="width:16px;height:16px"></i> Exportar CSV
+        </button>
+      </div>
+
+
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
+        <div class="stat-card border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400">Reservas no Mês</p>
+          <p class="text-2xl font-bold text-white">${thisMonth.length}</p>
+        </div>
+        <div class="stat-card border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400">Professores Ativos</p>
+          <p class="text-2xl font-bold text-white">${Object.keys(byUser).length}</p>
+        </div>
+        <div class="stat-card border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400">Carrinhos Utilizados</p>
+          <p class="text-2xl font-bold text-white">${Object.keys(byCart).length}</p>
+        </div>
+      </div>
+
+
+      <div class="grid gap-4 md:grid-cols-2 mb-6">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <h3 class="font-semibold text-white text-sm mb-3">Uso por Horário</h3>
+          <div class="space-y-2">
+            ${topPeriods.map(([p,count]) => `
+              <div class="flex items-center gap-2">
+                <span class="text-xs text-slate-400 w-40 truncate flex-shrink-0">${p.split('(')[0].trim()}</span>
+                <div class="flex-1 bg-slate-800 rounded-full h-4 overflow-hidden">
+                  <div class="bg-blue-500 h-full rounded-full" style="width:${(count/maxPeriod)*100}%"></div>
+                </div>
+                <span class="text-xs text-slate-300 w-8 text-right">${count}</span>
+              </div>
+            `).join('')}
+            ${topPeriods.length===0?'<p class="text-sm text-slate-500">Sem dados.</p>':''}
+          </div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <h3 class="font-semibold text-white text-sm mb-3">Top Professores</h3>
+          <div class="space-y-2">
+            ${topUsers.map(([email,count],i) => {
+              const res = thisMonth.find(r=>r.reserved_email===email);
+              return `<div class="flex items-center justify-between text-sm bg-slate-800/50 rounded-lg px-3 py-2">
+                <span class="text-white"><span class="text-slate-500 mr-2">${i+1}.</span>${res?.reserved_by||email}</span>
+                <span class="text-blue-400 text-xs font-medium">${count} reservas</span>
+              </div>`;
+            }).join('')}
+            ${topUsers.length===0?'<p class="text-sm text-slate-500">Sem dados.</p>':''}
+          </div>
+        </div>
+      </div>
+
+
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+        <h3 class="font-semibold text-white text-sm mb-3">Uso por Carrinho</h3>
+        <div class="grid gap-3 sm:grid-cols-2">
+          ${topCarts.map(([name,count]) => `
+            <div class="flex items-center justify-between bg-slate-800/50 rounded-lg px-4 py-3">
+              <span class="text-white text-sm">${name}</span>
+              <span class="text-blue-400 text-sm font-medium">${count} reservas</span>
+            </div>
+          `).join('')}
+          ${topCarts.length===0?'<p class="text-sm text-slate-500 col-span-2 text-center">Sem dados.</p>':''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+
+function exportCSV() {
+  const reservations = getReservations();
+  if (reservations.length === 0) { toast('Sem dados para exportar.','error'); return; }
+  let csv = 'Data,Carrinho,Andar,Tipo,Dispositivo,Professor,Email,Horário,Status\n';
+  reservations.forEach(r => {
+    csv += `${r.date},"${r.cart_name}","${r.floor}",${r.device_type},${r.device_number},"${r.reserved_by}",${r.reserved_email},"${r.period}",${r.status}\n`;
+  });
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'relatorio_reservas.csv'; a.click();
+  URL.revokeObjectURL(url);
+  toast('Relatório exportado!');
+}
+
+
+// Init icons
+document.addEventListener('DOMContentLoaded', () => { lucide.createIcons(); });
+tailwind.config={theme:{extend:{}}}          <div class="space-y-2">
+            ${topPeriods.map(([p,count]) => `
+              <div class="flex items-center gap-2">
+                <span class="text-xs text-slate-400 w-40 truncate flex-shrink-0">${p.split('(')[0].trim()}</span>
+                <div class="flex-1 bg-slate-800 rounded-full h-4 overflow-hidden">
+                  <div class="bg-blue-500 h-full rounded-full" style="width:${(count/maxPeriod)*100}%"></div>
+                </div>
+                <span class="text-xs text-slate-300 w-8 text-right">${count}</span>
+              </div>
+            `).join('')}
+            ${topPeriods.length===0?'<p class="text-sm text-slate-500">Sem dados.</p>':''}
+          </div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <h3 class="font-semibold text-white text-sm mb-3">Top Professores</h3>
+          <div class="space-y-2">
+            ${topUsers.map(([email,count],i) => {
+              const res = thisMonth.find(r=>r.reserved_email===email);
+              return `<div class="flex items-center justify-between text-sm bg-slate-800/50 rounded-lg px-3 py-2">
+                <span class="text-white"><span class="text-slate-500 mr-2">${i+1}.</span>${res?.reserved_by||email}</span>
+                <span class="text-blue-400 text-xs font-medium">${count} reservas</span>
+              </div>`;
+            }).join('')}
+            ${topUsers.length===0?'<p class="text-sm text-slate-500">Sem dados.</p>':''}
+          </div>
+        </div>
+      </div>
+
+
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+        <h3 class="font-semibold text-white text-sm mb-3">Uso por Carrinho</h3>
+        <div class="grid gap-3 sm:grid-cols-2">
+          ${topCarts.map(([name,count]) => `
+            <div class="flex items-center justify-between bg-slate-800/50 rounded-lg px-4 py-3">
+              <span class="text-white text-sm">${name}</span>
+              <span class="text-blue-400 text-sm font-medium">${count} reservas</span>
+            </div>
+          `).join('')}
+          ${topCarts.length===0?'<p class="text-sm text-slate-500 col-span-2 text-center">Sem dados.</p>':''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+
+function exportCSV() {
+  const reservations = getReservations();
+  if (reservations.length === 0) { toast('Sem dados para exportar.','error'); return; }
+  let csv = 'Data,Carrinho,Andar,Tipo,Dispositivo,Professor,Email,Horário,Status\n';
+  reservations.forEach(r => {
+    csv += `${r.date},"${r.cart_name}","${r.floor}",${r.device_type},${r.device_number},"${r.reserved_by}",${r.reserved_email},"${r.period}",${r.status}\n`;
+  });
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'relatorio_reservas.csv'; a.click();
+  URL.revokeObjectURL(url);
+  toast('Relatório exportado!');
+}
+
+
+// Init icons
+document.addEventListener('DOMContentLoaded', () => { lucide.createIcons(); });
+tailwind.config={theme:{extend:{}}}}}
+  const m = document.getElementById('device-schedule-modal');
+  if (m) m.remove();
+}
+
+// ========== ADMIN: GERENCIAR RESERVAS ==========
+function renderGerenciar(c) {
+  const reservations = getReservations().filter(r => r.status === 'active');
+  const today = todayStr();
+  const past = reservations.filter(r => r.date < today);
+  const todayRes = reservations.filter(r => r.date === today);
+  const future = reservations.filter(r => r.date > today);
+
+  function groupReservations(list) {
+    const groups = {};
+    list.forEach(r => {
+      const key = r.reserved_email + '|' + r.date + '|' + r.cart_name;
+      if (!groups[key]) groups[key] = { name: r.reserved_by, email: r.reserved_email, date: r.date, cart: r.cart_name, floor: r.floor, periods: new Set(), devices: new Set(), ids: [] };
+      groups[key].periods.add(r.period);
+      groups[key].devices.add(r.device_number);
+      groups[key].ids.push(r.__backendId);
+    });
+    return Object.values(groups);
+  }
+
+  function renderGroup(groups, emptyMsg) {
+    if (groups.length === 0) return '<p class="text-sm text-slate-500 italic">' + emptyMsg + '</p>';
+    return groups.map(function(g) {
+      return '<div class="flex items-center justify-between bg-slate-800/60 rounded-xl px-4 py-3 text-sm">' +
+        '<div>' +
+        '<p class="text-white font-medium">' + g.name + ' <span class="text-slate-400 font-normal text-xs">' + g.email + '</span></p>' +
+        '<p class="text-xs text-slate-400">' + new Date(g.date+'T12:00:00').toLocaleDateString('pt-BR') + ' — ' + g.cart + ' ' + g.floor + ' — ' + [...g.devices].sort().map(function(d){return '#'+d;}).join(', ') + '</p>' +
+        '<p class="text-xs text-slate-500">' + [...g.periods].join(', ') + '</p>' +
+        '</div>' +
+        '<button onclick="adminCancelReservation(\'' + g.ids.join(',') + '\')" class="ml-3 px-3 py-1.5 text-xs bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition flex-shrink-0">Cancelar</button>' +
+        '</div>';
+    }).join('');
+  }
+
+  c.innerHTML = '<div class="fade-in max-w-4xl mx-auto">' +
+    '<div class="flex items-center justify-between mb-6">' +
+    '<div><h2 class="text-xl font-bold flex items-center gap-2"><i data-lucide="shield-check" style="width:22px;height:22px;color:#3b82f6"></i> Gerenciar Reservas</h2>' +
+    '<p class="text-slate-400 text-sm">Visualize e libere reservas de todos os usuários</p></div>' +
+    '<span class="text-xs bg-blue-500/20 text-blue-400 px-3 py-1.5 rounded-full font-medium">' + reservations.length + ' ativa(s)</span>' +
+    '</div>' +
+    (past.length > 0 ? '<div class="bg-slate-900 border border-amber-500/30 rounded-2xl p-5 mb-4">' +
+    '<h3 class="text-sm font-semibold text-amber-400 mb-3 flex items-center gap-2"><i data-lucide="alert-triangle" style="width:16px;height:16px"></i> Reservas Vencidas (' + groupReservations(past).length + ') — dispositivos não devolvidos</h3>' +
+    '<div class="space-y-2">' + renderGroup(groupReservations(past), '') + '</div></div>' : '') +
+    '<div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 mb-4">' +
+    '<h3 class="text-sm font-semibold text-white mb-3 flex items-center gap-2"><i data-lucide="calendar" style="width:16px;height:16px;color:#3b82f6"></i> Hoje — ' + new Date().toLocaleDateString('pt-BR') + '</h3>' +
+    '<div class="space-y-2">' + renderGroup(groupReservations(todayRes), 'Nenhuma reserva para hoje.') + '</div></div>' +
+    '<div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">' +
+    '<h3 class="text-sm font-semibold text-white mb-3 flex items-center gap-2"><i data-lucide="calendar-clock" style="width:16px;height:16px;color:#8b5cf6"></i> Próximas reservas</h3>' +
+    '<div class="space-y-2">' + renderGroup(groupReservations(future), 'Nenhuma reserva futura.') + '</div></div>' +
+    '</div>';
+  lucide.createIcons();
+}
+
+async function adminCancelReservation(ids) {
+  if (isLoading) return;
+  isLoading = true;
+  const arr = ids.split(',');
+  window.dataSdk.beginBatch();
+  let hasError = false;
+  for (const id of arr) {
+    const rec = allData.find(function(d){ return d.__backendId === id; });
+    if (rec) {
+      const result = await window.dataSdk.delete(rec);
+      if (!result.isOk) hasError = true;
+    }
+  }
+  window.dataSdk.endBatch();
+  isLoading = false;
+  if (hasError) toast('Erro ao cancelar uma ou mais reservas.', 'warning');
+  else toast('Reserva cancelada pelo administrador.');
+}
+
+// ========== ADMIN: RELATORIOS ==========
+window.selectedRelatorioMonth = null;
+
+function changeRelatorioMonth(month) {
+  window.selectedRelatorioMonth = month;
+  renderCurrentView();
+}
+
+function exportCSV(month) {
+  const reservations = getReservations().filter(function(r){ return r.date && r.date.startsWith(month); });
+  if (reservations.length === 0) { toast('Nenhum dado para exportar.', 'error'); return; }
+  const headers = ['Data','Periodo','Carrinho','Andar','Dispositivo','Patrimonio','Marca','Professor','Email','Status'];
+  const rows = reservations.map(function(r){ return [r.date, r.period, r.cart_name, r.floor, '#'+r.device_number, r.device_serial||'', r.device_brand||'', r.reserved_by, r.reserved_email, r.status]; });
+  const csv = [headers].concat(rows).map(function(row){ return row.map(function(v){ return '"' + String(v).replace(/"/g,'""') + '"'; }).join(','); }).join('\n');
+  const blob = new Blob(['﻿'+csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'reservas-' + month + '.csv'; a.click();
+  URL.revokeObjectURL(url);
+  toast('CSV exportado!');
+}
+
+function renderRelatorio(c) {
+  const now = new Date();
+  const currentMonth = now.toISOString().slice(0,7);
+  const month = window.selectedRelatorioMonth || currentMonth;
+  const monthRes = getReservations().filter(function(r){ return r.date && r.date.startsWith(month); });
+
+  const totalRes = monthRes.length;
+  const activeProfs = new Set(monthRes.map(function(r){ return r.reserved_email; })).size;
+  const cartsUsed = new Set(monthRes.map(function(r){ return r.cart_name; })).size;
+
+  const byPeriod = {};
+  monthRes.forEach(function(r){ byPeriod[r.period] = (byPeriod[r.period]||0)+1; });
+  const byProf = {};
+  monthRes.forEach(function(r){ byProf[r.reserved_by] = (byProf[r.reserved_by]||0)+1; });
+  const topProfs = Object.entries(byProf).sort(function(a,b){return b[1]-a[1];}).slice(0,5);
+  const byCart = {};
+  monthRes.forEach(function(r){ byCart[r.cart_name] = (byCart[r.cart_name]||0)+1; });
+
+  const months = Array.from({length:6},function(_,i){
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    return d.toISOString().slice(0,7);
+  });
+
+  const monthOptions = months.map(function(m){
+    const parts = m.split('-');
+    const label = new Date(parseInt(parts[0]), parseInt(parts[1])-1, 1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+    return '<option value="' + m + '" ' + (m===month?'selected':'') + '>' + label + '</option>';
+  }).join('');
+
+  const periodBars = Object.keys(byPeriod).length === 0 ? '<p class="text-slate-500 text-sm">Sem dados.</p>' :
+    Object.entries(byPeriod).sort(function(a,b){return b[1]-a[1];}).map(function(entry){
+      const period = entry[0]; const count = entry[1];
+      const pct = totalRes > 0 ? Math.round((count/totalRes)*100) : 0;
+      return '<div class="mb-2"><div class="flex justify-between text-xs mb-1"><span class="text-slate-300 truncate pr-2">' + period + '</span><span class="text-slate-400 flex-shrink-0">' + count + '</span></div><div class="w-full bg-slate-800 rounded-full h-1.5"><div class="bg-blue-500 h-1.5 rounded-full" style="width:' + pct + '%"></div></div></div>';
+    }).join('');
+
+  const profRows = topProfs.length === 0 ? '<p class="text-slate-500 text-sm">Sem dados.</p>' :
+    topProfs.map(function(entry, i){
+      return '<div class="flex items-center justify-between py-2 border-b border-slate-800 last:border-0"><span class="text-sm text-slate-300">' + (i+1) + '. ' + entry[0] + '</span><span class="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full">' + entry[1] + ' reservas</span></div>';
+    }).join('');
+
+  const cartBars = Object.keys(byCart).length === 0 ? '<p class="text-slate-500 text-sm">Sem dados.</p>' :
+    Object.entries(byCart).sort(function(a,b){return b[1]-a[1];}).map(function(entry){
+      const cart = entry[0]; const count = entry[1];
+      const pct = totalRes > 0 ? Math.round((count/totalRes)*100) : 0;
+      return '<div class="mb-2"><div class="flex justify-between text-xs mb-1"><span class="text-slate-300">' + cart + '</span><span class="text-slate-400">' + count + ' (' + pct + '%)</span></div><div class="w-full bg-slate-800 rounded-full h-1.5"><div class="bg-emerald-500 h-1.5 rounded-full" style="width:' + pct + '%"></div></div></div>';
+    }).join('');
+
+  c.innerHTML = '<div class="fade-in max-w-5xl mx-auto">' +
+    '<div class="flex items-center justify-between mb-6 flex-wrap gap-3">' +
+    '<div><h2 class="text-xl font-bold flex items-center gap-2"><i data-lucide="bar-chart-2" style="width:22px;height:22px;color:#3b82f6"></i> Relatorios</h2><p class="text-slate-400 text-sm">Analise de uso do sistema</p></div>' +
+    '<div class="flex gap-2 items-center"><select onchange="changeRelatorioMonth(this.value)" class="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white">' + monthOptions + '</select>' +
+    '<button onclick="exportCSV(\'' + month + '\')" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-xl transition flex items-center gap-2"><i data-lucide="download" style="width:16px;height:16px"></i> Exportar CSV</button></div></div>' +
+    '<div class="grid grid-cols-3 gap-4 mb-6">' +
+    '<div class="bg-slate-900 border border-slate-800 rounded-xl p-4"><p class="text-xs text-slate-400">Reservas no Mes</p><p class="text-3xl font-bold text-white mt-1">' + totalRes + '</p></div>' +
+    '<div class="bg-slate-900 border border-slate-800 rounded-xl p-4"><p class="text-xs text-slate-400">Professores Ativos</p><p class="text-3xl font-bold text-white mt-1">' + activeProfs + '</p></div>' +
+    '<div class="bg-slate-900 border border-slate-800 rounded-xl p-4"><p class="text-xs text-slate-400">Carrinhos Utilizados</p><p class="text-3xl font-bold text-white mt-1">' + cartsUsed + '</p></div>' +
+    '</div>' +
+    '<div class="grid gap-4 sm:grid-cols-2 mb-4">' +
+    '<div class="bg-slate-900 border border-slate-800 rounded-2xl p-5"><h3 class="font-semibold text-white mb-3 text-sm">Uso por Horario</h3>' + periodBars + '</div>' +
+    '<div class="bg-slate-900 border border-slate-800 rounded-2xl p-5"><h3 class="font-semibold text-white mb-3 text-sm">Top Professores</h3>' + profRows + '</div>' +
+    '</div>' +
+    '<div class="bg-slate-900 border border-slate-800 rounded-2xl p-5"><h3 class="font-semibold text-white mb-3 text-sm">Uso por Carrinho</h3>' + cartBars + '</div>' +
+    '</div>';
+  lucide.createIcons();
+}
