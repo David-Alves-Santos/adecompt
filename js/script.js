@@ -97,10 +97,11 @@ function getReservations() { return allData.filter(d => d.type === 'reservation'
 function toast(msg, type='success') {
   const c = document.getElementById('toast-container');
   const t = document.createElement('div');
-  t.className = `toast px-4 py-3 rounded-xl text-sm font-medium shadow-lg ${type==='success'?'bg-emerald-600':'bg-red-500'} text-white`;
+  const colorClass = type === 'success' ? 'bg-emerald-600' : type === 'warning' ? 'bg-amber-500' : 'bg-red-500';
+  t.className = `toast px-4 py-3 rounded-xl text-sm font-medium shadow-lg ${colorClass} text-white`;
   t.textContent = msg;
   c.appendChild(t);
-  setTimeout(() => t.remove(), 3000);
+  setTimeout(() => t.remove(), type === 'warning' ? 4500 : 3000);
 }
 
 
@@ -309,9 +310,21 @@ async function handleLogin() {
   const email = document.getElementById('login-email').value.trim().toLowerCase();
   const pass = document.getElementById('login-pass').value;
   const errEl = document.getElementById('login-error');
-
+  const btn = document.getElementById('login-btn');
 
   if (!email || !pass) { errEl.textContent='Preencha todos os campos'; errEl.classList.remove('hidden'); return; }
+
+  // Estado de loading
+  btn.disabled = true;
+  btn.textContent = 'Entrando...';
+  btn.style.opacity = '0.7';
+  errEl.classList.add('hidden');
+
+  function restoreBtn() {
+    btn.disabled = false;
+    btn.textContent = 'Entrar';
+    btn.style.opacity = '1';
+  }
 
   // --- SUPABASE AUTH (primary) ---
   if (isSupabaseMode()) {
@@ -372,6 +385,7 @@ async function handleLogin() {
       errEl.textContent = 'E-mail ou senha incorretos';
       errEl.classList.remove('hidden');
       console.error('Supabase auth error:', authError.message);
+      restoreBtn();
       return;
     }
 
@@ -386,6 +400,7 @@ async function handleLogin() {
       errEl.textContent = 'Erro ao carregar perfil do usuário.';
       errEl.classList.remove('hidden');
       console.error('Profile fetch error:', profileError?.message);
+      restoreBtn();
       return;
     }
 
@@ -393,6 +408,7 @@ async function handleLogin() {
     if (profile.user_status === 'inativo') {
       errEl.textContent = 'Este usuário foi desativado. Contate o administrador.';
       errEl.classList.remove('hidden');
+      restoreBtn();
       return;
     }
 
@@ -412,18 +428,16 @@ async function handleLogin() {
     return;
   }
 
-
   const user = getUsers().find(u => u.email === email && u.password === pass);
-  if (!user) { errEl.textContent='E-mail ou senha incorretos'; errEl.classList.remove('hidden'); return; }
-
+  if (!user) { errEl.textContent='E-mail ou senha incorretos'; errEl.classList.remove('hidden'); restoreBtn(); return; }
 
   // Check if user is inactive
   if (user.user_status === 'inativo') {
     errEl.textContent='Este usuário foi desativado. Contate o administrador.';
     errEl.classList.remove('hidden');
+    restoreBtn();
     return;
   }
-
 
   currentUser = { name: user.name, email: user.email, role: user.role, __backendId: user.__backendId };
   saveSession();
@@ -576,7 +590,7 @@ function renderReservar(c) {
       <p class="text-slate-400 text-sm mb-6">Selecione o carrinho, data e horários desejados</p>
 
 
-      ${carts.length === 0 ? '<div class="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400"><i data-lucide="inbox" style="width:40px;height:40px;margin:0 auto 12px;color:#475569"></i><p>Nenhum carrinho cadastrado ainda.</p><p class="text-xs mt-1">Peça ao administrador para cadastrar os carrinhos.</p></div>' : `
+      ${carts.length === 0 ? `<div class="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400"><i data-lucide="inbox" style="width:40px;height:40px;margin:0 auto 12px;color:#475569"></i><p>Nenhum carrinho cadastrado ainda.</p>${isAdmin() ? `<button onclick="navigate('carrinhos')" class="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition">+ Cadastrar primeiro carrinho</button>` : '<p class="text-xs mt-1">Peça ao administrador para cadastrar os carrinhos.</p>'}</div>` : `
       <div class="grid gap-4 sm:grid-cols-2 mb-6">
         <div>
           <label class="block text-sm font-medium text-slate-300 mb-1">Carrinho</label>
@@ -1378,7 +1392,7 @@ function renderCarrinhos(c) {
                     <button onclick="editDevice('${dev.__backendId}')" class="p-1 text-amber-400 hover:bg-amber-500/20 rounded transition" title="Editar dispositivo">
                       <i data-lucide="pencil" style="width:14px;height:14px"></i>
                     </button>
-                    <button onclick="deleteDevice('${dev.__backendId}')" class="p-1 text-red-400 hover:bg-red-500/20 rounded transition">
+                    <button onclick="confirmDeleteDevice('${dev.__backendId}')" class="p-1 text-red-400 hover:bg-red-500/20 rounded transition">
                       <i data-lucide="trash-2" style="width:14px;height:14px"></i>
                     </button>
                   </span>
@@ -1702,6 +1716,44 @@ async function deleteCart(id) {
 }
 
 
+function confirmDeleteDevice(id) {
+  const dev = getDevices().find(d => d.__backendId === id);
+  if (!dev) return;
+  const existing = document.getElementById('delete-device-modal');
+  if (existing) existing.remove();
+  const modal = document.createElement('div');
+  modal.id = 'delete-device-modal';
+  modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+  modal.innerHTML = `
+    <div class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+    <div class="relative bg-slate-900 border border-red-500/40 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0">
+          <i data-lucide="triangle-alert" style="width:20px;height:20px;color:#ef4444"></i>
+        </div>
+        <div>
+          <h3 class="font-bold text-white">Excluir dispositivo?</h3>
+          <p class="text-xs text-slate-400">Posição #${dev.device_number} — ${dev.device_brand} ${dev.device_type || ''}</p>
+        </div>
+      </div>
+      <p class="text-sm text-slate-300 mb-5">Esta ação não pode ser desfeita.</p>
+      <div class="flex gap-3">
+        <button onclick="document.getElementById('delete-device-modal').remove()"
+          class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition">
+          Cancelar
+        </button>
+        <button onclick="document.getElementById('delete-device-modal').remove(); deleteDevice('${id}')"
+          class="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg transition">
+          Excluir
+        </button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  lucide.createIcons();
+}
+
+
 async function deleteDevice(id) {
   const rec = allData.find(d => d.__backendId === id);
   if (rec) {
@@ -1773,7 +1825,7 @@ function renderUsuarios(c) {
         `;
         }).join('')}
       </div>
-      <p class="text-xs text-slate-500 mt-3">* Admin padrão: admin@escola.com / admin123 | Use o ícone de energia para desativar/ativar usuários sem perder histórico</p>
+      <p class="text-xs text-slate-500 mt-3">* Use o ícone de energia para desativar/ativar usuários sem perder histórico</p>
     </div>
   `;
 }
@@ -2355,67 +2407,46 @@ function showDeviceSchedule(cartName, deviceNum) {
   lucide.createIcons();
 }
 
-// Fecha o modal de agenda do dispositivo.
 function closeDeviceModal() {
-  const modal = document.getElementById('device-schedule-modal');
-  if (modal) modal.remove();
+  const m = document.getElementById('device-schedule-modal');
+  if (m) m.remove();
 }
-
 
 // ========== ADMIN: GERENCIAR RESERVAS ==========
 function renderGerenciar(c) {
   const reservations = getReservations().filter(r => r.status === 'active');
   const today = todayStr();
-
-  // Group by date+cart+user for better readability
-  // Separate today vs future vs past
-  const past = reservations.filter(r => r.date < today).sort((a,b) => b.date.localeCompare(a.date));
+  const past = reservations.filter(r => r.date < today);
   const todayRes = reservations.filter(r => r.date === today);
-  const future = reservations.filter(r => r.date > today).sort((a,b) => a.date.localeCompare(b.date));
+  const future = reservations.filter(r => r.date > today);
 
   function groupReservations(list) {
     const groups = {};
     list.forEach(r => {
-      const key = `${r.date}|${r.cart_name}|${r.reserved_email}`;
-      if (!groups[key]) groups[key] = { date: r.date, cart: r.cart_name, floor: r.floor, user: r.reserved_by, email: r.reserved_email, devices: new Set(), periods: new Set(), ids: [] };
-      groups[key].devices.add(r.device_number);
+      const key = `${r.reserved_email}|${r.date}|${r.cart_name}`;
+      if (!groups[key]) groups[key] = { name: r.reserved_by, email: r.reserved_email, date: r.date, cart: r.cart_name, floor: r.floor, periods: new Set(), devices: new Set(), ids: [] };
       groups[key].periods.add(r.period);
+      groups[key].devices.add(r.device_number);
       groups[key].ids.push(r.__backendId);
     });
     return Object.values(groups);
   }
 
   function renderGroup(groups, emptyMsg) {
-    if (groups.length === 0) return `<p class="text-sm text-slate-500 italic px-2">${emptyMsg}</p>`;
-    return groups.map(g => {
-      const dateObj = new Date(g.date + 'T12:00:00');
-      const dateStr = dateObj.toLocaleDateString('pt-BR');
-      const isPast = g.date < today;
-      return `
-        <div class="flex items-center justify-between bg-slate-800/60 border border-slate-700/50 rounded-xl px-4 py-3 gap-3">
-          <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-2 flex-wrap">
-              <span class="text-white text-sm font-medium truncate">${g.user}</span>
-              ${isPast ? '<span class="text-xs bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full">Vencida</span>' : ''}
-            </div>
-            <div class="text-xs text-slate-400 mt-0.5">${g.cart} · ${g.floor} · ${dateStr}</div>
-            <div class="text-xs text-slate-500 mt-0.5">
-              Disp: ${[...g.devices].sort((a,b)=>a-b).map(d=>'#'+d).join(', ')} &nbsp;·&nbsp; ${g.periods.size} período(s)
-            </div>
-          </div>
-          <div class="flex gap-2 flex-shrink-0">
-            <button onclick="adminFinalizeReservation('${g.ids.join(',')}')"
-              class="px-3 py-1.5 text-xs bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 rounded-lg transition flex items-center gap-1">
-              <i data-lucide="check" style="width:12px;height:12px"></i> Liberar
-            </button>
-            <button onclick="adminCancelReservation('${g.ids.join(',')}')"
-              class="px-3 py-1.5 text-xs bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition flex items-center gap-1">
-              <i data-lucide="trash-2" style="width:12px;height:12px"></i> Excluir
-            </button>
-          </div>
+    if (groups.length === 0) return `<p class="text-sm text-slate-500 italic">${emptyMsg}</p>`;
+    return groups.map(g => `
+      <div class="flex items-center justify-between bg-slate-800/60 rounded-xl px-4 py-3 text-sm">
+        <div>
+          <p class="text-white font-medium">${g.name} <span class="text-slate-400 font-normal text-xs">${g.email}</span></p>
+          <p class="text-xs text-slate-400">${new Date(g.date+'T12:00:00').toLocaleDateString('pt-BR')} — ${g.cart} ${g.floor} — ${[...g.devices].sort().map(d=>'#'+d).join(', ')}</p>
+          <p class="text-xs text-slate-500">${[...g.periods].join(', ')}</p>
         </div>
-      `;
-    }).join('');
+        <button onclick="adminCancelReservation('${g.ids.join(',')}')"
+          class="ml-3 px-3 py-1.5 text-xs bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition flex-shrink-0">
+          Cancelar
+        </button>
+      </div>
+    `).join('');
   }
 
   c.innerHTML = `
@@ -2430,62 +2461,42 @@ function renderGerenciar(c) {
         <span class="text-xs bg-blue-500/20 text-blue-400 px-3 py-1.5 rounded-full font-medium">${reservations.length} ativa(s)</span>
       </div>
 
-      <div class="space-y-6">
-        <!-- VENCIDAS -->
-        ${past.length > 0 ? `
-        <div class="bg-slate-900 border border-amber-500/30 rounded-2xl p-5">
-          <h3 class="text-sm font-semibold text-amber-400 mb-3 flex items-center gap-2">
-            <i data-lucide="alert-triangle" style="width:16px;height:16px"></i>
-            Reservas Vencidas (${past.length} registro(s)) — dispositivos ainda não devolvidos
-          </h3>
-          <div class="space-y-2">${renderGroup(groupReservations(past), '')}</div>
-        </div>` : ''}
+      ${past.length > 0 ? `
+      <div class="bg-slate-900 border border-amber-500/30 rounded-2xl p-5 mb-4">
+        <h3 class="text-sm font-semibold text-amber-400 mb-3 flex items-center gap-2">
+          <i data-lucide="alert-triangle" style="width:16px;height:16px"></i>
+          Reservas Vencidas (${groupReservations(past).length}) — dispositivos ainda não devolvidos
+        </h3>
+        <div class="space-y-2">${renderGroup(groupReservations(past), '')}</div>
+      </div>` : ''}
 
-        <!-- HOJE -->
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-          <h3 class="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-            <i data-lucide="calendar" style="width:16px;height:16px;color:#3b82f6"></i>
-            Hoje — ${new Date().toLocaleDateString('pt-BR')}
-          </h3>
-          <div class="space-y-2">${renderGroup(groupReservations(todayRes), 'Nenhuma reserva para hoje.')}</div>
-        </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 mb-4">
+        <h3 class="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+          <i data-lucide="calendar" style="width:16px;height:16px;color:#3b82f6"></i>
+          Hoje — ${new Date().toLocaleDateString('pt-BR')}
+        </h3>
+        <div class="space-y-2">${renderGroup(groupReservations(todayRes), 'Nenhuma reserva para hoje.')}</div>
+      </div>
 
-        <!-- FUTURAS -->
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-          <h3 class="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-            <i data-lucide="calendar-clock" style="width:16px;height:16px;color:#8b5cf6"></i>
-            Próximas reservas
-          </h3>
-          <div class="space-y-2">${renderGroup(groupReservations(future), 'Nenhuma reserva futura.')}</div>
-        </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+        <h3 class="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+          <i data-lucide="calendar-clock" style="width:16px;height:16px;color:#8b5cf6"></i>
+          Próximas reservas
+        </h3>
+        <div class="space-y-2">${renderGroup(groupReservations(future), 'Nenhuma reserva futura.')}</div>
       </div>
     </div>
   `;
   lucide.createIcons();
 }
 
-async function adminFinalizeReservation(idsStr) {
+async function adminCancelReservation(ids) {
   if (isLoading) return;
   isLoading = true;
-  const ids = idsStr.split(',');
-  window.dataSdk.beginBatch();
-  for (const id of ids) {
-    const rec = allData.find(d => d.__backendId === id);
-    if (rec) await window.dataSdk.update({ ...rec, status: 'completed' });
-  }
-  window.dataSdk.endBatch();
-  isLoading = false;
-  toast('✅ Dispositivos liberados com sucesso!');
-  navigate('gerenciar');
-}
-
-async function adminCancelReservation(idsStr) {
-  if (isLoading) return;
-  isLoading = true;
-  const ids = idsStr.split(',');
+  const arr = ids.split(',');
   window.dataSdk.beginBatch();
   let hasError = false;
-  for (const id of ids) {
+  for (const id of arr) {
     const rec = allData.find(d => d.__backendId === id);
     if (rec) {
       const result = await window.dataSdk.delete(rec);
@@ -2494,196 +2505,133 @@ async function adminCancelReservation(idsStr) {
   }
   window.dataSdk.endBatch();
   isLoading = false;
-  if (hasError) {
-    toast('⚠️ Erro ao excluir uma ou mais reservas.', 'error');
-  } else {
-    toast('Reserva excluída.');
-    navigate('gerenciar');
-  }
+  if (hasError) toast('⚠️ Erro ao cancelar uma ou mais reservas.', 'warning');
+  else toast('Reserva cancelada pelo administrador.');
 }
 
-// ========== ADMIN: RELATÓRIO ==========
+// ========== ADMIN: RELATÓRIOS ==========
+window.selectedRelatorioMonth = null;
+
+function changeRelatorioMonth(month) {
+  window.selectedRelatorioMonth = month;
+  renderCurrentView();
+}
+
+function exportCSV(month) {
+  const reservations = getReservations().filter(r => r.date && r.date.startsWith(month));
+  if (reservations.length === 0) { toast('Nenhum dado para exportar.', 'error'); return; }
+  const headers = ['Data','Período','Carrinho','Andar','Dispositivo','Patrimônio','Marca','Professor','E-mail','Status'];
+  const rows = reservations.map(r => [
+    r.date, r.period, r.cart_name, r.floor, '#'+r.device_number,
+    r.device_serial||'', r.device_brand||'', r.reserved_by, r.reserved_email, r.status
+  ]);
+  const csv = [headers,...rows].map(row=>row.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob(['﻿'+csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `reservas-${month}.csv`; a.click();
+  URL.revokeObjectURL(url);
+  toast('CSV exportado com sucesso!');
+}
+
 function renderRelatorio(c) {
-  const reservations = getReservations();
-  const today = todayStr();
+  const now = new Date();
+  const currentMonth = now.toISOString().slice(0,7);
+  const month = window.selectedRelatorioMonth || currentMonth;
+  const monthRes = getReservations().filter(r => r.date && r.date.startsWith(month));
 
+  const totalRes = monthRes.length;
+  const activeProfs = new Set(monthRes.map(r=>r.reserved_email)).size;
+  const cartsUsed = new Set(monthRes.map(r=>r.cart_name)).size;
 
-  // Stats
-  const thisMonth = reservations.filter(r => r.date && r.date.substring(0,7) === today.substring(0,7));
-  const byUser = {};
-  thisMonth.forEach(r => { byUser[r.reserved_email] = (byUser[r.reserved_email]||0)+1; });
-  const byCart = {};
-  thisMonth.forEach(r => { byCart[r.cart_name] = (byCart[r.cart_name]||0)+1; });
   const byPeriod = {};
-  thisMonth.forEach(r => { byPeriod[r.period] = (byPeriod[r.period]||0)+1; });
+  monthRes.forEach(r => { byPeriod[r.period] = (byPeriod[r.period]||0)+1; });
 
+  const byProf = {};
+  monthRes.forEach(r => { byProf[r.reserved_by] = (byProf[r.reserved_by]||0)+1; });
+  const topProfs = Object.entries(byProf).sort((a,b)=>b[1]-a[1]).slice(0,5);
 
-  const topUsers = Object.entries(byUser).sort((a,b)=>b[1]-a[1]).slice(0,10);
-  const topCarts = Object.entries(byCart).sort((a,b)=>b[1]-a[1]);
-  const topPeriods = Object.entries(byPeriod).sort((a,b)=>b[1]-a[1]);
+  const byCart = {};
+  monthRes.forEach(r => { byCart[r.cart_name] = (byCart[r.cart_name]||0)+1; });
 
-
-  const maxPeriod = topPeriods.length > 0 ? topPeriods[0][1] : 1;
-
+  const months = Array.from({length:6},(_,i)=>{
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    return d.toISOString().slice(0,7);
+  });
 
   c.innerHTML = `
     <div class="fade-in max-w-5xl mx-auto">
-      <div class="flex items-center justify-between mb-6">
+      <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
-          <h2 class="text-xl font-bold flex items-center gap-2"><i data-lucide="bar-chart-2" style="width:22px;height:22px;color:#3b82f6"></i> Relatórios</h2>
-          <p class="text-slate-400 text-sm">Dados do mês atual</p>
+          <h2 class="text-xl font-bold flex items-center gap-2">
+            <i data-lucide="bar-chart-2" style="width:22px;height:22px;color:#3b82f6"></i> Relatórios
+          </h2>
+          <p class="text-slate-400 text-sm">Análise de uso do sistema</p>
         </div>
-        <button onclick="exportCSV()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-xl transition flex items-center gap-1">
-          <i data-lucide="download" style="width:16px;height:16px"></i> Exportar CSV
-        </button>
+        <div class="flex gap-2 items-center">
+          <select onchange="changeRelatorioMonth(this.value)"
+            class="px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white">
+            ${months.map(m => {
+              const [y,mo] = m.split('-');
+              const label = new Date(y,mo-1,1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+              return `<option value="${m}" ${m===month?'selected':''}>${label}</option>`;
+            }).join('')}
+          </select>
+          <button onclick="exportCSV('${month}')"
+            class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-xl transition flex items-center gap-2">
+            <i data-lucide="download" style="width:16px;height:16px"></i> Exportar CSV
+          </button>
+        </div>
       </div>
 
-
-      <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
-        <div class="stat-card border border-slate-800 rounded-xl p-4">
+      <div class="grid grid-cols-3 gap-4 mb-6">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
           <p class="text-xs text-slate-400">Reservas no Mês</p>
-          <p class="text-2xl font-bold text-white">${thisMonth.length}</p>
+          <p class="text-3xl font-bold text-white mt-1">${totalRes}</p>
         </div>
-        <div class="stat-card border border-slate-800 rounded-xl p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
           <p class="text-xs text-slate-400">Professores Ativos</p>
-          <p class="text-2xl font-bold text-white">${Object.keys(byUser).length}</p>
+          <p class="text-3xl font-bold text-white mt-1">${activeProfs}</p>
         </div>
-        <div class="stat-card border border-slate-800 rounded-xl p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
           <p class="text-xs text-slate-400">Carrinhos Utilizados</p>
-          <p class="text-2xl font-bold text-white">${Object.keys(byCart).length}</p>
+          <p class="text-3xl font-bold text-white mt-1">${cartsUsed}</p>
         </div>
       </div>
 
-
-      <div class="grid gap-4 md:grid-cols-2 mb-6">
+      <div class="grid gap-4 sm:grid-cols-2 mb-4">
         <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-          <h3 class="font-semibold text-white text-sm mb-3">Uso por Horário</h3>
-          <div class="space-y-2">
-            ${topPeriods.map(([p,count]) => `
-              <div class="flex items-center gap-2">
-                <span class="text-xs text-slate-400 w-40 truncate flex-shrink-0">${p.split('(')[0].trim()}</span>
-                <div class="flex-1 bg-slate-800 rounded-full h-4 overflow-hidden">
-                  <div class="bg-blue-500 h-full rounded-full" style="width:${(count/maxPeriod)*100}%"></div>
+          <h3 class="font-semibold text-white mb-3 text-sm">Uso por Horário</h3>
+          ${Object.keys(byPeriod).length===0 ? '<p class="text-slate-500 text-sm">Sem dados.</p>' :
+            Object.entries(byPeriod).sort((a,b)=>b[1]-a[1]).map(([period,count])=>{
+              const pct = totalRes > 0 ? Math.round((count/totalRes)*100) : 0;
+              return `<div class="mb-2">
+                <div class="flex justify-between text-xs mb-1">
+                  <span class="text-slate-300 truncate pr-2">${period}</span>
+                  <span class="text-slate-400 flex-shrink-0">${count}</span>
                 </div>
-                <span class="text-xs text-slate-300 w-8 text-right">${count}</span>
-              </div>
-            `).join('')}
-            ${topPeriods.length===0?'<p class="text-sm text-slate-500">Sem dados.</p>':''}
-          </div>
-        </div>
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-          <h3 class="font-semibold text-white text-sm mb-3">Top Professores</h3>
-          <div class="space-y-2">
-            ${topUsers.map(([email,count],i) => {
-              const res = thisMonth.find(r=>r.reserved_email===email);
-              return `<div class="flex items-center justify-between text-sm bg-slate-800/50 rounded-lg px-3 py-2">
-                <span class="text-white"><span class="text-slate-500 mr-2">${i+1}.</span>${res?.reserved_by||email}</span>
-                <span class="text-blue-400 text-xs font-medium">${count} reservas</span>
+                <div class="w-full bg-slate-800 rounded-full h-1.5">
+                  <div class="bg-blue-500 h-1.5 rounded-full" style="width:${pct}%"></div>
+                </div>
               </div>`;
             }).join('')}
-            ${topUsers.length===0?'<p class="text-sm text-slate-500">Sem dados.</p>':''}
-          </div>
-        </div>
-      </div>
-
-
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-        <h3 class="font-semibold text-white text-sm mb-3">Uso por Carrinho</h3>
-        <div class="grid gap-3 sm:grid-cols-2">
-          ${topCarts.map(([name,count]) => `
-            <div class="flex items-center justify-between bg-slate-800/50 rounded-lg px-4 py-3">
-              <span class="text-white text-sm">${name}</span>
-              <span class="text-blue-400 text-sm font-medium">${count} reservas</span>
-            </div>
-          `).join('')}
-          ${topCarts.length===0?'<p class="text-sm text-slate-500 col-span-2 text-center">Sem dados.</p>':''}
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-
-function exportCSV() {
-  const reservations = getReservations();
-  if (reservations.length === 0) { toast('Sem dados para exportar.','error'); return; }
-  let csv = 'Data,Carrinho,Andar,Tipo,Dispositivo,Professor,Email,Horário,Status\n';
-  reservations.forEach(r => {
-    csv += `${r.date},"${r.cart_name}","${r.floor}",${r.device_type},${r.device_number},"${r.reserved_by}",${r.reserved_email},"${r.period}",${r.status}\n`;
-  });
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'relatorio_reservas.csv'; a.click();
-  URL.revokeObjectURL(url);
-  toast('Relatório exportado!');
-}
-
-
-// Init icons
-document.addEventListener('DOMContentLoaded', () => { lucide.createIcons(); });
-tailwind.config={theme:{extend:{}}}          <div class="space-y-2">
-            ${topPeriods.map(([p,count]) => `
-              <div class="flex items-center gap-2">
-                <span class="text-xs text-slate-400 w-40 truncate flex-shrink-0">${p.split('(')[0].trim()}</span>
-                <div class="flex-1 bg-slate-800 rounded-full h-4 overflow-hidden">
-                  <div class="bg-blue-500 h-full rounded-full" style="width:${(count/maxPeriod)*100}%"></div>
-                </div>
-                <span class="text-xs text-slate-300 w-8 text-right">${count}</span>
-              </div>
-            `).join('')}
-            ${topPeriods.length===0?'<p class="text-sm text-slate-500">Sem dados.</p>':''}
-          </div>
         </div>
         <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-          <h3 class="font-semibold text-white text-sm mb-3">Top Professores</h3>
-          <div class="space-y-2">
-            ${topUsers.map(([email,count],i) => {
-              const res = thisMonth.find(r=>r.reserved_email===email);
-              return `<div class="flex items-center justify-between text-sm bg-slate-800/50 rounded-lg px-3 py-2">
-                <span class="text-white"><span class="text-slate-500 mr-2">${i+1}.</span>${res?.reserved_by||email}</span>
-                <span class="text-blue-400 text-xs font-medium">${count} reservas</span>
-              </div>`;
-            }).join('')}
-            ${topUsers.length===0?'<p class="text-sm text-slate-500">Sem dados.</p>':''}
-          </div>
+          <h3 class="font-semibold text-white mb-3 text-sm">Top Professores</h3>
+          ${topProfs.length===0 ? '<p class="text-slate-500 text-sm">Sem dados.</p>' :
+            topProfs.map(([name,count],i)=>`
+              <div class="flex items-center justify-between py-2 border-b border-slate-800 last:border-0">
+                <span class="text-sm text-slate-300">${i+1}. ${name}</span>
+                <span class="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full">${count} reservas</span>
+              </div>
+            `).join('')}
         </div>
       </div>
-
 
       <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-        <h3 class="font-semibold text-white text-sm mb-3">Uso por Carrinho</h3>
-        <div class="grid gap-3 sm:grid-cols-2">
-          ${topCarts.map(([name,count]) => `
-            <div class="flex items-center justify-between bg-slate-800/50 rounded-lg px-4 py-3">
-              <span class="text-white text-sm">${name}</span>
-              <span class="text-blue-400 text-sm font-medium">${count} reservas</span>
-            </div>
-          `).join('')}
-          ${topCarts.length===0?'<p class="text-sm text-slate-500 col-span-2 text-center">Sem dados.</p>':''}
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-
-function exportCSV() {
-  const reservations = getReservations();
-  if (reservations.length === 0) { toast('Sem dados para exportar.','error'); return; }
-  let csv = 'Data,Carrinho,Andar,Tipo,Dispositivo,Professor,Email,Horário,Status\n';
-  reservations.forEach(r => {
-    csv += `${r.date},"${r.cart_name}","${r.floor}",${r.device_type},${r.device_number},"${r.reserved_by}",${r.reserved_email},"${r.period}",${r.status}\n`;
-  });
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'relatorio_reservas.csv'; a.click();
-  URL.revokeObjectURL(url);
-  toast('Relatório exportado!');
-}
-
-
-// Init icons
-document.addEventListener('DOMContentLoaded', () => { lucide.createIcons(); });
-tailwind.config={theme:{extend:{}}}}}
+        <h3 class="font-semibold text-white mb-3 text-sm">Uso por Carrinho</h3>
+        ${Object.keys(byCart).length===0 ? '<p class="text-slate-500 text-sm">Sem dados.</p>' :
+          Object.entries(byCart).sort((a,b)=>b[1]-a[1]).map(([cart,count])=>{
+            const pct = totalRes > 0 ? Math.round((count/totalRes)*100) : 0;
+            return `<div class="mb-2">
+              <div class="flex justify-between text-x
