@@ -232,15 +232,18 @@ function clearSession() {
 
 
 async function initApp() {
+  // Inicializar ícones Lucide na tela de login imediatamente
+  lucide.createIcons();
+
   const r = await window.dataSdk.init(dataHandler);
   if (!r.isOk) { console.error('SDK init failed'); }
-  
+
   // Try to restore Supabase session after data is loaded
   const supabaseSession = await tryRestoreSupabaseSession();
   if (supabaseSession) {
     showMainApp();
   }
-  
+
   // Check expiring reservations every 30 seconds
   setInterval(checkExpiringReservations, 30000);
 }
