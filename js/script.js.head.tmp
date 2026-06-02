@@ -1,0 +1,2369 @@
+﻿// ========== STATE ==========
+let allData = [];
+let currentUser = null;
+let currentView = 'reservar';
+let isLoading = false;
+let isFormOpen = false;
+// Per├¡odo selecionado na tela de Monitoramento. `null` = seguir o rel├│gio (modo "ao vivo").
+let selectedMonitorPeriod = null;
+
+// ========== SUPABASE AUTH ==========
+/** Check if Supabase mode is active (dataSdk using Supabase vs Express API) */
+function isSupabaseMode() {
+  return typeof getSupabaseClient === 'function' && getSupabaseClient() !== null;
+}
+
+/**
+ * Attempt to restore an existing Supabase session on page load.
+ * Returns true if a valid session was found and currentUser was set.
+ */
+async function tryRestoreSupabaseSession() {
+  if (!isSupabaseMode()) return false;
+  try {
+    const supabase = getSupabaseClient();
+    const { data: { session }, error } = await supabase.auth.getSession();
+    if (error || !session) return false;
+
+    // Fetch user profile from profiles table
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', session.user.id)
+      .single();
+
+    if (profile) {
+      currentUser = {
+        name: profile.name,
+        email: profile.email,
+        role: profile.role,
+        __backendId: profile.id
+      };
+      // Sync profile into allData if not already there
+      const existing = allData.find(d => d.__backendId === profile.id && d.type === 'user');
+      if (!existing) {
+        allData.push({
+          ...profile,
+          __backendId: profile.id,
+          type: 'user',
+          password: '',
+          cart_name: '', floor: '', device_type: '', device_number: 0,
+          reserved_by: '', reserved_email: '', date: '', period: '', status: '',
+          device_brand: '', device_serial: '', cart_id: ''
+        });
+      }
+      return true;
+    }
+  } catch (e) {
+    console.warn('Supabase session restore failed:', e.message);
+  }
+  return false;
+}
+
+
+let PERIODS = [
+  '1┬║ Hor├írio (07:00-07:50)',
+  '2┬║ Hor├írio (07:50-08:40)',
+  '3┬║ Hor├írio (08:40-09:30)',
+  'Intervalo (09:30-09:50)',
+  '4┬║ Hor├írio (09:50-10:40)',
+  '5┬║ Hor├írio (10:40-11:30)',
+  '6┬║ Hor├írio (13:00-13:50)',
+  '7┬║ Hor├írio (13:50-14:40)',
+  '8┬║ Hor├írio (14:40-15:30)',
+  'Intervalo (15:30-15:50)',
+  '9┬║ Hor├írio (15:50-16:40)',
+  '10┬║ Hor├írio (16:40-17:30)'
+];
+
+
+const defaultConfig = {
+  app_title: 'Reserva de Computadores',
+  school_name: 'Sistema de Reservas Escolar',
+  background_color: '#0f172a',
+  surface_color: '#1e293b',
+  text_color: '#f1f5f9',
+  primary_color: '#3b82f6',
+  secondary_color: '#475569'
+};
+
+
+// ========== HELPERS ==========
+function getUsers() { return allData.filter(d => d.type === 'user'); }
+function getCarts() { return allData.filter(d => d.type === 'cart'); }
+function getDevices() { return allData.filter(d => d.type === 'device'); }
+function getReservations() { return allData.filter(d => d.type === 'reservation'); }
+
+
+function toast(msg, type='success') {
+  const c = document.getElementById('toast-container');
+  const t = document.createElement('div');
+  t.className = `toast px-4 py-3 rounded-xl text-sm font-medium shadow-lg ${type==='success'?'bg-emerald-600':'bg-red-500'} text-white`;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+
+function todayStr() { return new Date().toISOString().split('T')[0]; }
+
+
+// ========== DATA SDK ==========
+const dataHandler = {
+  onDataChanged(data) {
+    allData = data;
+    // Load periods from config if exists
+    const configRecord = data.find(d => d.config_key === 'school_periods');
+    if (configRecord && configRecord.periods_json) {
+      try {
+        PERIODS = JSON.parse(configRecord.periods_json);
+      } catch (e) {
+        console.error('Error parsing periods:', e);
+      }
+    }
+    // Auto-restore session from localStorage after data loads
+    if (!currentUser) {
+      if (loadSession()) {
+        showMainApp();
+        return;
+      }
+    }
+    if (currentUser && !isFormOpen) renderCurrentView();
+    // Check for expiring reservations
+    checkExpiringReservations();
+  }
+};
+
+
+function checkExpiringReservations() {
+  const now = new Date();
+  const reservations = getReservations().filter(r => r.status === 'active' && r.date === todayStr());
+  
+  reservations.forEach(res => {
+    // Parse period time
+    const timeMatch = res.period.match(/\((\d{2}):(\d{2})-(\d{2}):(\d{2})\)/);
+    if (!timeMatch) return;
+    
+    const [_, startH, startM, endH, endM] = timeMatch.map(Number);
+    const endTime = new Date();
+    endTime.setHours(endH, endM, 0, 0);
+    const fiveMinBefore = new Date(endTime.getTime() - 5 * 60000);
+    
+    // Check if we're within 5 minutes before end time
+    if (now >= fiveMinBefore && now < endTime) {
+      const user = getUsers().find(u => u.email === res.reserved_email);
+      if (user && user.phone && !res.notification_sent) {
+        sendExpirationNotification(user, res);
+      }
+    }
+  });
+}
+
+
+async function sendExpirationNotification(user, reservation) {
+  // Mark notification as sent to avoid duplicate sends
+  const updatedRes = { ...reservation, notification_sent: 'true' };
+  await window.dataSdk.update(updatedRes);
+  
+  const appUrl = window.location.href.split('?')[0].split('#')[0];
+  const message = `
+Ol├í ${user.name}! ÔÅ░
+
+
+Faltam 5 minutos para expirar sua reserva:
+­ƒô▒ Dispositivo: #${reservation.device_number}
+­ƒùé´©Å Carrinho: ${reservation.cart_name}
+ÔÅ▒´©Å Per├¡odo: ${reservation.period}
+
+
+Escolha uma a├º├úo:
+Ô£à Renovar: ${appUrl}#renovar=${reservation.__backendId}
+ÔØî Devolver: ${appUrl}#devolver=${reservation.__backendId}
+
+
+Acesse o app para gerenciar suas reservas!
+  `.trim();
+
+
+  // Show in-app notification
+  toast(`Notifica├º├úo enviada para ${user.name}`);
+  
+  // In a real app, this would send via WhatsApp/SMS API
+  // For now, we'll show the message in console as demo
+  console.log('­ƒô▓ Notification:', message);
+}
+
+
+// ========== SESS├âO PERSISTENTE ==========
+function saveSession() {
+  if (currentUser) {
+    localStorage.setItem('adelaide_session', JSON.stringify(currentUser));
+  }
+}
+
+function loadSession() {
+  try {
+    const saved = localStorage.getItem('adelaide_session');
+    if (saved) {
+      const user = JSON.parse(saved);
+      if (user.email === 'admin@escola.com') {
+        currentUser = user;
+        return true;
+      }
+      const found = getUsers().find(u => u.email === user.email && u.user_status !== 'inativo');
+      if (found) {
+        currentUser = { name: found.name, email: found.email, role: found.role, __backendId: found.__backendId };
+        return true;
+      }
+    }
+  } catch (e) {
+    console.error('Erro ao carregar sess├úo:', e);
+  }
+  return false;
+}
+
+function clearSession() {
+  localStorage.removeItem('adelaide_session');
+  // Also sign out from Supabase if in supabase mode
+  if (isSupabaseMode()) {
+    const supabase = getSupabaseClient();
+    supabase.auth.signOut().catch(() => {});
+  }
+}
+
+
+async function initApp() {
+  const r = await window.dataSdk.init(dataHandler);
+  if (!r.isOk) { console.error('SDK init failed'); }
+  
+  // Try to restore Supabase session after data is loaded
+  const supabaseSession = await tryRestoreSupabaseSession();
+  if (supabaseSession) {
+    showMainApp();
+  }
+  
+  // Check expiring reservations every 30 seconds
+  setInterval(checkExpiringReservations, 30000);
+}
+initApp();
+
+
+// ========== ELEMENT SDK ==========
+window.elementSdk.init({
+  defaultConfig,
+  onConfigChange: async (config) => {
+    const t = config.app_title || defaultConfig.app_title;
+    const s = config.school_name || defaultConfig.school_name;
+    const el1 = document.getElementById('login-title');
+    if (el1) el1.textContent = t;
+    const el2 = document.getElementById('login-school');
+    if (el2) el2.textContent = s;
+    const el3 = document.getElementById('sidebar-title');
+    if (el3) el3.textContent = t;
+
+
+    document.body.style.backgroundColor = config.background_color || defaultConfig.background_color;
+  },
+  mapToCapabilities: (config) => ({
+    recolorables: [
+      { get: () => config.background_color || defaultConfig.background_color, set: v => { config.background_color = v; window.elementSdk.setConfig({background_color:v}); }},
+      { get: () => config.surface_color || defaultConfig.surface_color, set: v => { config.surface_color = v; window.elementSdk.setConfig({surface_color:v}); }},
+      { get: () => config.text_color || defaultConfig.text_color, set: v => { config.text_color = v; window.elementSdk.setConfig({text_color:v}); }},
+      { get: () => config.primary_color || defaultConfig.primary_color, set: v => { config.primary_color = v; window.elementSdk.setConfig({primary_color:v}); }},
+      { get: () => config.secondary_color || defaultConfig.secondary_color, set: v => { config.secondary_color = v; window.elementSdk.setConfig({secondary_color:v}); }}
+    ],
+    borderables: [],
+    fontEditable: undefined,
+    fontSizeable: undefined
+  }),
+  mapToEditPanelValues: (config) => new Map([
+    ['app_title', config.app_title || defaultConfig.app_title],
+    ['school_name', config.school_name || defaultConfig.school_name]
+  ])
+});
+
+
+// ========== AUTH ==========
+function togglePasswordVisibility() {
+  const input = document.getElementById('login-pass');
+  const icon = document.getElementById('pass-eye-icon');
+  if (input.type === 'password') {
+    input.type = 'text';
+    if (icon) {
+      icon.setAttribute('data-lucide', 'eye-off');
+      lucide.createIcons();
+    }
+  } else {
+    input.type = 'password';
+    if (icon) {
+      icon.setAttribute('data-lucide', 'eye');
+      lucide.createIcons();
+    }
+  }
+}
+
+
+async function handleLogin() {
+  const email = document.getElementById('login-email').value.trim().toLowerCase();
+  const pass = document.getElementById('login-pass').value;
+  const errEl = document.getElementById('login-error');
+
+
+  if (!email || !pass) { errEl.textContent='Preencha todos os campos'; errEl.classList.remove('hidden'); return; }
+
+  // --- SUPABASE AUTH (primary) ---
+  if (isSupabaseMode()) {
+    const supabase = getSupabaseClient();
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: email,
+      password: pass
+    });
+
+    if (authError) {
+      errEl.textContent = 'E-mail ou senha incorretos';
+      errEl.classList.remove('hidden');
+      console.error('Supabase auth error:', authError.message);
+      return;
+    }
+
+    // Fetch user profile
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', authData.user.id)
+      .single();
+
+    if (profileError || !profile) {
+      errEl.textContent = 'Erro ao carregar perfil do usu├írio.';
+      errEl.classList.remove('hidden');
+      console.error('Profile fetch error:', profileError?.message);
+      return;
+    }
+
+    // Check if user is inactive
+    if (profile.user_status === 'inativo') {
+      errEl.textContent = 'Este usu├írio foi desativado. Contate o administrador.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+
+    currentUser = { name: profile.name, email: profile.email, role: profile.role, __backendId: profile.id };
+    saveSession();
+    showMainApp();
+    return;
+  }
+
+  // --- LEGACY AUTH (Express API mode, fallback) ---
+
+  // Default admin
+  if (email === 'admin@escola.com' && pass === 'admin123') {
+    currentUser = { name:'Administrador', email:'admin@escola.com', role:'admin' };
+    saveSession();
+    showMainApp();
+    return;
+  }
+
+
+  const user = getUsers().find(u => u.email === email && u.password === pass);
+  if (!user) { errEl.textContent='E-mail ou senha incorretos'; errEl.classList.remove('hidden'); return; }
+
+
+  // Check if user is inactive
+  if (user.user_status === 'inativo') {
+    errEl.textContent='Este usu├írio foi desativado. Contate o administrador.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+
+  currentUser = { name: user.name, email: user.email, role: user.role, __backendId: user.__backendId };
+  saveSession();
+  showMainApp();
+}
+
+
+function isAdmin() {
+  return currentUser && currentUser.role === 'admin';
+}
+
+
+function showMainApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('main-app').style.display = 'block';
+  document.getElementById('user-name').textContent = currentUser.name;
+  document.getElementById('user-role').textContent = currentUser.role === 'admin' ? 'Administrador' : 'Professor';
+  buildNav();
+  renderCurrentView();
+  lucide.createIcons();
+}
+
+
+function logout() {
+  currentUser = null;
+  currentView = 'reservar';
+  clearSession();
+  document.getElementById('main-app').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('login-email').value = '';
+  document.getElementById('login-pass').value = '';
+  document.getElementById('login-error').classList.add('hidden');
+}
+
+
+// ========== NAVIGATION ==========
+function buildNav() {
+  const nav = document.getElementById('nav-links');
+  const isAdmin = currentUser.role === 'admin';
+  let links = [
+    { id:'reservar', icon:'calendar-plus', label:'Reservar' },
+    { id:'minhas', icon:'bookmark', label:'Minhas Reservas' }
+  ];
+  if (isAdmin) {
+    links.push(
+      { id:'horarios', icon:'clock', label:'Hor├írios' },
+      { id:'carrinhos', icon:'hard-drive', label:'Carrinhos' },
+      { id:'usuarios', icon:'users', label:'Usu├írios' },
+      { id:'monitor', icon:'activity', label:'Monitoramento' },
+      { id:'gerenciar', icon:'shield-check', label:'Gerenciar Reservas' },
+      { id:'relatorio', icon:'bar-chart-2', label:'Relat├│rios' }
+    );
+  }
+  nav.innerHTML = links.map(l => `
+    <button onclick="navigate('${l.id}')" class="sidebar-link w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-300 ${currentView===l.id?'active':''}" data-nav="${l.id}">
+      <i data-lucide="${l.icon}" style="width:16px;height:16px"></i> ${l.label}
+    </button>
+  `).join('');
+  lucide.createIcons();
+}
+
+
+function navigate(view) {
+  // Ao trocar de aba, sempre voltamos o Monitoramento ao modo "ao vivo".
+  // Assim o usu├írio n├úo fica preso a um per├¡odo antigo se sair e voltar ├á tela.
+  selectedMonitorPeriod = null;
+  currentView = view;
+  buildNav();
+  renderCurrentView();
+}
+
+
+function renderCurrentView() {
+  const c = document.getElementById('main-content');
+  switch(currentView) {
+    case 'reservar': renderReservar(c); break;
+    case 'minhas': renderMinhas(c); break;
+    case 'horarios': renderHorarios(c); break;
+    case 'carrinhos': renderCarrinhos(c); break;
+    case 'usuarios': renderUsuarios(c); break;
+    case 'monitor': renderMonitor(c); break;
+    case 'gerenciar': renderGerenciar(c); break;
+    case 'relatorio': renderRelatorio(c); break;
+  }
+  lucide.createIcons();
+}
+
+
+function toggleSidebar() {
+  const s = document.getElementById('sidebar');
+  s.classList.toggle('hidden');
+}
+
+
+// ========== RESERVAR ==========
+function renderReservar(c) {
+  const carts = getCarts();
+  const today = todayStr();
+
+
+  c.innerHTML = `
+    <div class="fade-in max-w-6xl mx-auto">
+      <h2 class="text-xl font-bold mb-1 flex items-center gap-2"><i data-lucide="calendar-plus" style="width:22px;height:22px;color:#3b82f6"></i> Reservar Equipamento</h2>
+      <p class="text-slate-400 text-sm mb-6">Selecione o carrinho, data e hor├írios desejados</p>
+
+
+      ${carts.length === 0 ? '<div class="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400"><i data-lucide="inbox" style="width:40px;height:40px;margin:0 auto 12px;color:#475569"></i><p>Nenhum carrinho cadastrado ainda.</p><p class="text-xs mt-1">Pe├ºa ao administrador para cadastrar os carrinhos.</p></div>' : `
+      <div class="grid gap-4 sm:grid-cols-2 mb-6">
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1">Carrinho</label>
+          <select id="sel-cart" onchange="updateDeviceGrid()" class="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white">
+            <option value="">Selecione um carrinho</option>
+            ${carts.map(ct => `<option value="${ct.__backendId}">${ct.cart_name} ÔÇö ${ct.floor} (${ct.device_type})</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1">Data</label>
+          <input type="date" id="sel-date" value="${today}" min="${today}" onchange="updateDeviceGrid()" class="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white">
+        </div>
+      </div>
+
+
+      <div class="mb-6">
+        <label class="block text-sm font-medium text-slate-300 mb-1">Turma <span class="text-slate-500 font-normal text-xs">(obrigat├│rio)</span></label>
+        <input type="text" id="sel-turma" placeholder="Ex: 9┬║A, 8┬║B, 7┬║C..." maxlength="20"
+          class="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-slate-300 mb-2">Hor├írios</label>
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 mb-6" id="period-checks">
+          ${PERIODS.map((p,i) => `
+            <label class="flex items-center gap-2 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg cursor-pointer hover:border-blue-500 transition text-xs">
+              <input type="checkbox" value="${p}" class="period-cb accent-blue-500" onchange="updateDeviceGrid()"> <span>${p}</span>
+            </label>
+          `).join('')}
+        </div>
+      </div>
+
+
+        <div id="device-grid-section" class="hidden">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-semibold text-slate-300">Dispositivos</h3>
+          <div class="flex items-center gap-4 text-xs text-slate-400">
+            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-blue-500 inline-block"></span> Dispon├¡vel</span>
+            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-red-500 inline-block"></span> Em uso</span>
+            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-slate-600 inline-block"></span> N├úo cadastrado</span>
+            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-emerald-500 inline-block"></span> Selecionado</span>
+          </div>
+        </div>
+        <div id="device-grid" class="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 gap-2 mb-6"></div>
+        <button id="confirm-reservation-btn" onclick="confirmReservation()" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition" style="opacity:0.4;pointer-events:none">Confirmar Reserva</button>
+      </div>
+      `}
+    </div>
+  `;
+}
+
+
+let selectedDevices = new Set();
+
+
+function updateDeviceGrid() {
+  const cartId = document.getElementById('sel-cart')?.value;
+  const date = document.getElementById('sel-date')?.value;
+  const checkedPeriods = [...document.querySelectorAll('.period-cb:checked')].map(cb => cb.value);
+  const section = document.getElementById('device-grid-section');
+  const grid = document.getElementById('device-grid');
+
+
+  if (!cartId || !date || checkedPeriods.length === 0) {
+    if (section) section.classList.add('hidden');
+    return;
+  }
+  section.classList.remove('hidden');
+  selectedDevices.clear();
+
+
+  const cart = getCarts().find(ct => ct.__backendId === cartId);
+  if (!cart) return;
+
+
+  // Get all devices registered for this cart
+  // Use String() coercion to avoid type mismatch between SDK id types
+  const cartDevices = getDevices().filter(d => String(d.cart_id) === String(cartId));
+  const registeredDeviceNumbers = new Set(cartDevices.map(d => parseInt(d.device_number)));
+
+
+  const reservations = getReservations().filter(r =>
+    r.cart_name === cart.cart_name && r.date === date && checkedPeriods.includes(r.period) && r.status === 'active'
+  );
+  const reservedDevices = new Set(reservations.map(r => parseInt(r.device_number)));
+
+
+  let html = '';
+  for (let i = 1; i <= 40; i++) {
+    const isRegistered = registeredDeviceNumbers.has(i);
+    const reserved = reservedDevices.has(i);
+    const icon = cart.device_type === 'Tablet' ? 'tablet' : 'laptop';
+    
+    // Status: notregistered (gray), reserved (red), available (blue)
+    let status, bgColor, borderColor, textColor, clickable;
+    if (!isRegistered) {
+      status = 'notregistered';
+      bgColor = 'bg-slate-700/30';
+      borderColor = 'border-slate-600';
+      textColor = 'text-slate-500';
+      clickable = false;
+    } else if (reserved) {
+      status = 'reserved';
+      bgColor = 'bg-red-500/20';
+      borderColor = 'border-red-500/50';
+      textColor = 'text-red-400';
+      clickable = false;
+    } else {
+      status = 'available';
+      bgColor = 'bg-blue-500/20';
+      borderColor = 'border-blue-500/50 hover:border-blue-400';
+      textColor = 'text-blue-400';
+      clickable = true;
+    }
+
+
+    html += `
+      <div class="device-card rounded-xl p-2 text-center border-2 ${bgColor} ${borderColor} ${clickable ? 'cursor-pointer' : 'cursor-not-allowed'}"
+           data-device="${i}" data-status="${status}" onclick="toggleDevice(this, ${i}, '${status}')">
+        <i data-lucide="${icon}" style="width:20px;height:20px;margin:0 auto;color:${status==='notregistered'?'#78909c':status==='reserved'?'#ef4444':'#3b82f6'}"></i>
+        <div class="device-num-label text-xs mt-1 font-medium ${textColor}">#${i}</div>
+        ${status === 'notregistered' ? `<div class="text-xs text-slate-500">n├úo cadastrado</div>` : status === 'reserved' ? `<div class="text-xs text-red-300 truncate" title="${reservations.find(r=>parseInt(r.device_number)===i)?.reserved_by||''}">${(reservations.find(r=>parseInt(r.device_number)===i)?.reserved_by||'').split(' ')[0]}</div>` : ''}
+      </div>
+    `;
+  }
+  grid.innerHTML = html;
+  lucide.createIcons();
+  updateConfirmBtn();
+}
+
+
+function toggleDevice(el, num, status) {
+  // L├¬ o status do atributo data ÔÇö mais confi├ível que o par├ómetro fixo do onclick
+  const currentStatus = el.getAttribute('data-status');
+  if (currentStatus !== 'available') return;
+
+  if (selectedDevices.has(num)) {
+    selectedDevices.delete(num);
+    el.className = 'device-card rounded-xl p-2 text-center border-2 bg-blue-500/20 border-blue-500/50 hover:border-blue-400 cursor-pointer';
+    // lucide substitui <i> por <svg>, ent├úo buscamos os dois
+    const icon = el.querySelector('i, svg');
+    if (icon) icon.style.color = '#3b82f6';
+    const textEl = el.querySelector('.device-num-label');
+    if (textEl) {
+      textEl.classList.remove('text-emerald-400');
+      textEl.classList.add('text-blue-400');
+    }
+  } else {
+    selectedDevices.add(num);
+    el.className = 'device-card rounded-xl p-2 text-center border-2 bg-emerald-500/20 border-emerald-500 cursor-pointer';
+    const icon = el.querySelector('i, svg');
+    if (icon) icon.style.color = '#10b981';
+    const textEl = el.querySelector('.device-num-label');
+    if (textEl) {
+      textEl.classList.remove('text-blue-400');
+      textEl.classList.add('text-emerald-400');
+    }
+  }
+  updateConfirmBtn();
+}
+
+
+function updateConfirmBtn() {
+  const btn = document.getElementById('confirm-reservation-btn');
+  if (btn) {
+    const shouldEnable = selectedDevices.size > 0;
+    // Nunca usar btn.disabled ÔÇö bloqueia o onclick mesmo com pointerEvents 'auto'
+    if (shouldEnable) {
+      btn.style.opacity = '1';
+      btn.style.pointerEvents = 'auto';
+      btn.style.backgroundColor = '#2563eb';
+      btn.style.cursor = 'pointer';
+      btn.onmouseover = () => { btn.style.backgroundColor = '#1d4ed8'; };
+      btn.onmouseout = () => { btn.style.backgroundColor = '#2563eb'; };
+    } else {
+      btn.style.opacity = '0.4';
+      btn.style.pointerEvents = 'none';
+      btn.style.backgroundColor = '#475569';
+      btn.style.cursor = 'not-allowed';
+      btn.onmouseover = null;
+      btn.onmouseout = null;
+    }
+  }
+}
+
+
+function showConfirmationModal(cartId, date, periods, cart, turma) {
+  if (!cart || periods.length === 0 || selectedDevices.size === 0) return;
+
+
+  const totalReservations = periods.length * selectedDevices.size;
+  const dateObj = new Date(date + 'T12:00:00');
+  const formattedDate = dateObj.toLocaleDateString('pt-BR');
+
+
+  const modal = document.createElement('div');
+  modal.id = 'confirmation-modal';
+  modal.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 fade-in';
+  modal.innerHTML = `
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-sm w-full p-6 fade-in">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center">
+          <i data-lucide="alert-circle" style="width:20px;height:20px;color:#3b82f6"></i>
+        </div>
+        <h3 class="font-bold text-white text-lg">Confirmar Reserva?</h3>
+      </div>
+      
+      <div class="bg-slate-700/30 border border-slate-600 rounded-xl p-4 mb-6 space-y-2">
+        <div class="flex justify-between text-sm">
+          <span class="text-slate-400">Carrinho:</span>
+          <span class="text-white font-medium">${cart.cart_name}</span>
+        </div>
+        <div class="flex justify-between text-sm">
+          <span class="text-slate-400">Data:</span>
+          <span class="text-white font-medium">${formattedDate}</span>
+        </div>
+        <div class="flex justify-between text-sm">
+          <span class="text-slate-400">Dispositivos:</span>
+          <span class="text-blue-400 font-medium">${[...selectedDevices].sort((a,b)=>a-b).map(d=>'#'+d).join(', ')}</span>
+        </div>
+        <div class="flex justify-between text-sm">
+          <span class="text-slate-400">Turma:</span>
+          <span class="text-white font-medium">${turma || 'ÔÇö'}</span>
+        </div>
+        <div class="flex justify-between text-sm">
+          <span class="text-slate-400">Hor├írios:</span>
+          <span class="text-white font-medium">${periods.length} per├¡odo(s)</span>
+        </div>
+        <div class="border-t border-slate-600 pt-2 mt-2">
+          <div class="flex justify-between text-sm font-semibold">
+            <span class="text-slate-300">Total de Reservas:</span>
+            <span class="text-emerald-400">${totalReservations}</span>
+          </div>
+        </div>
+      </div>
+
+
+      <p class="text-sm text-slate-400 mb-6">Voc├¬ deseja prosseguir com esta reserva?</p>
+
+
+      <div class="flex gap-3">
+        <button class="modal-cancel-btn flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition">
+          Cancelar
+        </button>
+        <button class="modal-confirm-btn flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition flex items-center justify-center gap-2">
+          <i data-lucide="check" style="width:16px;height:16px"></i> Confirmar
+        </button>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+  lucide.createIcons();
+  
+  const cancelBtn = modal.querySelector('.modal-cancel-btn');
+  const confirmBtn = modal.querySelector('.modal-confirm-btn');
+  
+  cancelBtn.onclick = (e) => {
+    e.stopPropagation();
+    modal.remove();
+    isLoading = false; // liberar o bot├úo ao cancelar (RACE-1)
+  };
+
+  confirmBtn.onclick = (e) => {
+    e.stopPropagation();
+    modal.remove();
+    // isLoading j├í est├í true; proceedWithReservation vai gerenci├í-lo daqui
+    proceedWithReservation(cartId, date, periods, cart, turma);
+  };
+
+  modal.onclick = (e) => {
+    if (e.target === modal) {
+      modal.remove();
+      isLoading = false; // liberar ao fechar clicando fora (RACE-1)
+    }
+  };
+}
+
+
+async function proceedWithReservation(cartId, date, periods, cart, turma) {
+  // isLoading j├í foi setado como true em confirmReservation() antes de abrir o modal.
+  // Esta guarda cobre chamadas diretas eventuais.
+  if (!isLoading) isLoading = true;
+
+
+  if (!cart || periods.length === 0 || selectedDevices.size === 0) {
+    isLoading = false;
+    toast('Dados inv├ílidos para criar reserva.', 'error');
+    return;
+  }
+
+
+  const btn = document.getElementById('confirm-reservation-btn');
+  if (btn) {
+    btn.style.pointerEvents = 'none';
+    btn.style.opacity = '0.4';
+    btn.innerHTML = '<i data-lucide="loader" style="width:16px;height:16px;margin-right:8px"></i> Processando...';
+  }
+
+
+  // Build the full list of reservation records
+  const reservations = [];
+  for (const period of periods) {
+    for (const devNum of selectedDevices) {
+      reservations.push({
+        type: 'reservation',
+        cart_name: cart.cart_name || '',
+        cart_id: cartId || '',
+        floor: cart.floor || '',
+        device_type: cart.device_type || '',
+        device_number: String(devNum),
+        device_brand: '',
+        device_serial: '',
+        turma: turma || '',
+        reserved_by: currentUser.name || '',
+        reserved_email: currentUser.email || '',
+        date: date || '',
+        period: period || '',
+        status: 'active',
+        notification_sent: ''
+      });
+    }
+  }
+
+  // Suppress intermediate re-renders during batch operation
+  window.dataSdk.beginBatch();
+  
+  let successCount = 0;
+  let errorCount = 0;
+  
+  try {
+    // Single batch insert instead of N sequential creates
+    const result = await window.dataSdk.createBatch(reservations);
+    if (result.isOk) {
+      successCount = result.count || 0;
+    } else {
+      errorCount = reservations.length;
+    }
+  } catch (err) {
+    console.error('Erro no processo:', err);
+    errorCount = reservations.length;
+  }
+
+  // Re-enable re-renders with a single update
+  window.dataSdk.endBatch();
+
+  isLoading = false;
+  
+  if (btn) {
+    btn.style.pointerEvents = 'auto';
+    btn.style.opacity = '1';
+    btn.innerHTML = 'Confirmar Reserva';
+  }
+  
+  if (successCount > 0) {
+    if (errorCount === 0) {
+      toast(`Ô£à ${successCount} reserva(s) criada(s) com sucesso!`);
+    } else {
+      toast(`ÔÜá´©Å ${successCount} reserva(s) criada(s), mas ${errorCount} falharam. Verifique conflitos.`, 'warning');
+    }
+    selectedDevices.clear();
+
+    // Reset form
+    const cartIdEl = document.getElementById('sel-cart');
+    const dateEl = document.getElementById('sel-date');
+    if (cartIdEl) cartIdEl.value = '';
+    if (dateEl) dateEl.value = todayStr();
+    const periodCheckboxes = document.querySelectorAll('.period-cb');
+    periodCheckboxes.forEach(cb => cb.checked = false);
+
+    updateDeviceGrid();
+
+    // Navigate immediately ÔÇö removed artificial 1.5s delay
+    navigate('minhas');
+  } else {
+    toast('ÔØî Erro ao criar reservas. Tente novamente.', 'error');
+  }
+}
+
+
+function confirmReservation() {
+  if (isLoading) return;
+  
+  const cartIdEl = document.getElementById('sel-cart');
+  const dateEl = document.getElementById('sel-date');
+  
+  if (!cartIdEl || !dateEl) {
+    toast('Formul├írio n├úo encontrado.', 'error');
+    return;
+  }
+
+
+  const cartId = cartIdEl.value;
+  const date = dateEl.value;
+  const turma = (document.getElementById('sel-turma')?.value || '').trim();
+  const periods = [...document.querySelectorAll('.period-cb:checked')].map(cb => cb.value);
+  const cart = getCarts().find(ct => ct.__backendId === cartId);
+
+
+  // Validation
+  if (!cartId) { toast('Selecione um carrinho.', 'error'); return; }
+  if (!cart) { toast('Carrinho n├úo encontrado.', 'error'); return; }
+  if (!date) { toast('Selecione uma data.', 'error'); return; }
+  if (periods.length === 0) { toast('Selecione pelo menos um hor├írio.', 'error'); return; }
+  if (selectedDevices.size === 0) { toast('Selecione pelo menos um dispositivo.', 'error'); return; }
+  if (!turma) { toast('Informe a turma antes de confirmar.', 'error'); return; }
+
+
+  // Check limit
+  const totalNew = periods.length * selectedDevices.size;
+  if (allData.length + totalNew > 999) {
+    toast('Limite de registros atingido. Exclua reservas antigas.', 'error');
+    return;
+  }
+
+
+  // Bloquear novos cliques enquanto o modal est├í aberto (RACE-1)
+  isLoading = true;
+
+  // Show confirmation modal
+  showConfirmationModal(cartId, date, periods, cart, turma);
+}
+
+
+// ========== MINHAS RESERVAS ==========
+function renderMinhas(c) {
+  const mine = getReservations().filter(r => r.reserved_email === currentUser.email && r.status === 'active');
+  const grouped = {};
+  mine.forEach(r => {
+    const key = `${r.date}|${r.cart_name}`;
+    if (!grouped[key]) grouped[key] = { date: r.date, cart: r.cart_name, floor: r.floor, type: r.device_type, periods: new Set(), devices: new Set(), records: [] };
+    grouped[key].periods.add(r.period);
+    grouped[key].devices.add(r.device_number);
+    grouped[key].records.push(r);
+  });
+
+
+  c.innerHTML = `
+    <div class="fade-in max-w-4xl mx-auto">
+      <h2 class="text-xl font-bold mb-1 flex items-center gap-2"><i data-lucide="bookmark" style="width:22px;height:22px;color:#3b82f6"></i> Minhas Reservas</h2>
+      <p class="text-slate-400 text-sm mb-6">Suas reservas ativas</p>
+      ${Object.keys(grouped).length === 0 ? '<div class="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400"><p>Nenhuma reserva ativa.</p></div>' :
+      Object.values(grouped).map(g => `
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 mb-4">
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <h3 class="font-semibold text-white">${g.cart} <span class="text-slate-400 text-xs font-normal">${g.floor}</span></h3>
+              <p class="text-sm text-slate-400">${new Date(g.date+'T12:00:00').toLocaleDateString('pt-BR')} ÔÇö ${g.type}</p>
+            </div>
+            <div class="flex gap-2">
+              <button onclick="showFinalizeModal('${g.records.map(r=>r.__backendId).join(',')}')" class="px-3 py-1 text-xs bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 rounded-lg transition flex items-center gap-1">
+                <i data-lucide="check" style="width:12px;height:12px"></i> Finalizar
+              </button>
+              <button onclick="cancelGroup('${g.records.map(r=>r.__backendId).join(',')}')" class="px-3 py-1 text-xs bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition">Cancelar</button>
+            </div>
+          </div>
+          <div class="text-xs text-slate-400 mb-1">Dispositivos: ${[...g.devices].sort((a,b)=>a-b).map(d=>'#'+d).join(', ')}</div>
+          <div class="text-xs text-slate-400">Hor├írios: ${[...g.periods].join(', ')}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+
+async function cancelGroup(ids) {
+  if (isLoading) return;
+  isLoading = true;
+  const arr = ids.split(',');
+  window.dataSdk.beginBatch();
+  let hasError = false;
+  for (const id of arr) {
+    const rec = allData.find(d => d.__backendId === id);
+    if (rec) {
+      const result = await window.dataSdk.delete(rec);
+      if (!result.isOk) hasError = true;
+    }
+  }
+  window.dataSdk.endBatch();
+  isLoading = false;
+  if (hasError) {
+    toast('ÔÜá´©Å Erro ao cancelar uma ou mais reservas.', 'error');
+  } else {
+    toast('Reserva cancelada.');
+  }
+}
+
+
+function showFinalizeModal(ids) {
+  if (isLoading) return;
+  
+  const arr = ids.split(',');
+  const records = arr.map(id => allData.find(d => d.__backendId === id)).filter(r => r);
+  
+  if (records.length === 0) {
+    toast('Nenhuma reserva encontrada.', 'error');
+    return;
+  }
+
+
+  const modal = document.createElement('div');
+  modal.id = 'finalize-modal';
+  modal.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 fade-in';
+  modal.innerHTML = `
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-sm w-full p-6 fade-in">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center">
+          <i data-lucide="check-circle" style="width:20px;height:20px;color:#10b981"></i>
+        </div>
+        <h3 class="font-bold text-white text-lg">Finalizar Reserva?</h3>
+      </div>
+      
+      <div class="bg-slate-700/30 border border-slate-600 rounded-xl p-4 mb-6 space-y-2">
+        <p class="text-sm text-slate-300">Voc├¬ deseja finalizar esta reserva? Os dispositivos ser├úo liberados para outros professores.</p>
+        <div class="border-t border-slate-600 pt-2 mt-2">
+          <div class="text-xs text-slate-400">
+            <p><strong>Total de dispositivos:</strong> ${records.length}</p>
+            <p><strong>Carrinho:</strong> ${records[0].cart_name}</p>
+            <p><strong>Data:</strong> ${new Date(records[0].date + 'T12:00:00').toLocaleDateString('pt-BR')}</p>
+          </div>
+        </div>
+      </div>
+
+
+      <p class="text-sm text-slate-400 mb-6">Esta a├º├úo n├úo pode ser desfeita.</p>
+
+
+      <div class="flex gap-3">
+        <button class="modal-cancel-btn flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition">
+          Cancelar
+        </button>
+        <button class="modal-finalize-btn flex-1 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg transition flex items-center justify-center gap-2">
+          <i data-lucide="check" style="width:16px;height:16px"></i> Finalizar
+        </button>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+  lucide.createIcons();
+  
+  const cancelBtn = modal.querySelector('.modal-cancel-btn');
+  const finalizeBtn = modal.querySelector('.modal-finalize-btn');
+  
+  cancelBtn.onclick = (e) => {
+    e.stopPropagation();
+    modal.remove();
+  };
+  
+  finalizeBtn.onclick = async (e) => {
+    e.stopPropagation();
+    modal.remove();
+    
+    isLoading = true;
+    window.dataSdk.beginBatch();
+    for (const id of arr) {
+      const rec = allData.find(d => d.__backendId === id);
+      if (rec) {
+        const updated = { ...rec, status: 'completed' };
+        await window.dataSdk.update(updated);
+      }
+    }
+    window.dataSdk.endBatch();
+    isLoading = false;
+    toast('Ô£à Reserva finalizada com sucesso!');
+    navigate('minhas');
+  };
+  
+  modal.onclick = (e) => {
+    if (e.target === modal) {
+      modal.remove();
+    }
+  };
+}
+
+
+// ========== ADMIN: HOR├üRIOS ==========
+function renderHorarios(c) {
+  const configRecord = allData.find(d => d.config_key === 'school_periods');
+  const currentPeriods = configRecord && configRecord.periods_json ? JSON.parse(configRecord.periods_json) : PERIODS;
+  
+  c.innerHTML = `
+    <div class="fade-in max-w-4xl mx-auto">
+      <div class="mb-6">
+        <h2 class="text-xl font-bold flex items-center gap-2"><i data-lucide="clock" style="width:22px;height:22px;color:#3b82f6"></i> Configurar Hor├írios da Escola</h2>
+        <p class="text-slate-400 text-sm">Customize os hor├írios de aula e intervalos</p>
+      </div>
+
+
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+        <div id="periods-editor" class="space-y-3 mb-6 max-h-96 overflow-y-auto">
+          ${currentPeriods.map((period, idx) => `
+            <div class="flex items-end gap-2 bg-slate-800/50 p-3 rounded-lg">
+              <div class="flex-1">
+                <label class="block text-xs text-slate-400 mb-1">Hor├írio ${idx + 1}</label>
+                <input type="text" value="${period}" data-idx="${idx}" class="period-input w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500">
+              </div>
+              <button onclick="removePeriod(${idx})" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
+                <i data-lucide="trash-2" style="width:16px;height:16px"></i>
+              </button>
+            </div>
+          `).join('')}
+        </div>
+
+
+        <button onclick="addNewPeriod()" class="w-full px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium rounded-lg transition mb-4 flex items-center justify-center gap-2">
+          <i data-lucide="plus" style="width:16px;height:16px"></i> Adicionar Hor├írio
+        </button>
+
+
+        <div class="border-t border-slate-700 pt-4 flex gap-2">
+          <button onclick="saveHorarios()" class="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition flex items-center justify-center gap-2">
+            <i data-lucide="save" style="width:16px;height:16px"></i> Salvar Altera├º├Áes
+          </button>
+          <button onclick="resetHorarios()" class="px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white font-semibold rounded-xl transition">
+            Resetar
+          </button>
+        </div>
+      </div>
+
+
+      <div class="mt-6 bg-slate-800/50 border border-slate-700 rounded-xl p-4">
+        <p class="text-xs text-slate-400 mb-2"><i data-lucide="info" style="width:14px;height:14px;display:inline;margin-right:6px"></i> Exemplo de formato:</p>
+        <div class="text-xs text-slate-300 space-y-1">
+          <p>Ô£ô 1┬║ Hor├írio (07:00-07:50)</p>
+          <p>Ô£ô Intervalo (09:30-09:50)</p>
+          <p>Ô£ô 6┬║ Hor├írio (13:00-13:50)</p>
+        </div>
+      </div>
+    </div>
+  `;
+  lucide.createIcons();
+}
+
+
+function addNewPeriod() {
+  const editor = document.getElementById('periods-editor');
+  const newIdx = document.querySelectorAll('.period-input').length;
+  const div = document.createElement('div');
+  div.className = 'flex items-end gap-2 bg-slate-800/50 p-3 rounded-lg fade-in';
+  div.innerHTML = `
+    <div class="flex-1">
+      <label class="block text-xs text-slate-400 mb-1">Hor├írio ${newIdx + 1}</label>
+      <input type="text" data-idx="${newIdx}" placeholder="Ex: Hor├írio (HH:MM-HH:MM)" class="period-input w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500" autofocus>
+    </div>
+    <button onclick="this.parentElement.remove()" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
+      <i data-lucide="trash-2" style="width:16px;height:16px"></i>
+    </button>
+  `;
+  editor.appendChild(div);
+  lucide.createIcons();
+  div.querySelector('input').focus();
+}
+
+
+function removePeriod(idx) {
+  const inputs = document.querySelectorAll('.period-input');
+  inputs[idx].parentElement.parentElement.remove();
+}
+
+
+async function saveHorarios() {
+  // BUG-5: sem este guard, duplo clique dispara dois creates simult├óneos antes do
+  // allData ser atualizado, gerando registros duplicados de school_periods.
+  if (isLoading) return;
+  isLoading = true;
+
+  const inputs = document.querySelectorAll('.period-input');
+  const newPeriods = Array.from(inputs).map(i => i.value.trim()).filter(v => v);
+
+  if (newPeriods.length === 0) {
+    isLoading = false;
+    toast('Adicione pelo menos um hor├írio.', 'error');
+    return;
+  }
+
+  // VALIDATION-3: o c├│digo de notifica├º├úo (linha ~141) faz regex /\((\d{2}):(\d{2})-(\d{2}):(\d{2})\)/
+  // para extrair hor├írio. Per├¡odos fora desse formato quebram a notifica├º├úo silenciosamente.
+  const periodFormat = /\(\d{2}:\d{2}-\d{2}:\d{2}\)/;
+  const invalids = newPeriods.filter(p => !periodFormat.test(p));
+  if (invalids.length > 0) {
+    isLoading = false;
+    toast(`ÔØî Formato inv├ílido: "${invalids[0]}". Use: Nome (HH:MM-HH:MM)`, 'error');
+    return;
+  }
+
+  const existingConfig = allData.find(d => d.config_key === 'school_periods');
+
+  if (existingConfig) {
+    const result = await window.dataSdk.update({
+      ...existingConfig,
+      periods_json: JSON.stringify(newPeriods)
+    });
+    isLoading = false;
+    if (result.isOk) {
+      PERIODS = newPeriods;
+      toast('Hor├írios atualizados com sucesso!');
+    } else {
+      toast('Erro ao salvar hor├írios.', 'error');
+    }
+  } else {
+    if (allData.length >= 999) {
+      isLoading = false;
+      toast('Limite de registros atingido.', 'error');
+      return;
+    }
+    const result = await window.dataSdk.create({
+      type: 'config',
+      config_key: 'school_periods',
+      periods_json: JSON.stringify(newPeriods),
+      name: '', email: '', password: '', role: '', floor: '', cart_name: '',
+      device_type: '', device_number: 0, device_brand: '', device_serial: '',
+      cart_id: '', reserved_by: '', reserved_email: '', date: '',
+      period: '', status: '', created_at: new Date().toISOString()
+    });
+    isLoading = false;
+    if (result.isOk) {
+      PERIODS = newPeriods;
+      toast('Hor├írios salvos com sucesso!');
+    } else {
+      toast('Erro ao salvar hor├írios.', 'error');
+    }
+  }
+}
+
+
+async function resetHorarios() {
+  const defaultPeriods = [
+    '1┬║ Hor├írio (07:00-07:50)',
+    '2┬║ Hor├írio (07:50-08:40)',
+    '3┬║ Hor├írio (08:40-09:30)',
+    'Intervalo (09:30-09:50)',
+    '4┬║ Hor├írio (09:50-10:40)',
+    '5┬║ Hor├írio (10:40-11:30)',
+    '6┬║ Hor├írio (13:00-13:50)',
+    '7┬║ Hor├írio (13:50-14:40)',
+    '8┬║ Hor├írio (14:40-15:30)',
+    'Intervalo (15:30-15:50)',
+    '9┬║ Hor├írio (15:50-16:40)',
+    '10┬║ Hor├írio (16:40-17:30)'
+  ];
+
+
+  const existingConfig = allData.find(d => d.config_key === 'school_periods');
+  
+  if (existingConfig) {
+    await window.dataSdk.delete(existingConfig);
+  }
+  
+  PERIODS = defaultPeriods;
+  toast('Hor├írios resetados para o padr├úo.');
+  navigate('horarios');
+}
+function renderCarrinhos(c) {
+  const carts = getCarts();
+  const devices = getDevices();
+  c.innerHTML = `
+    <div class="fade-in max-w-5xl mx-auto">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-xl font-bold flex items-center gap-2"><i data-lucide="hard-drive" style="width:22px;height:22px;color:#3b82f6"></i> Carrinhos</h2>
+          <p class="text-slate-400 text-sm">Gerencie os carrinhos e dispositivos</p>
+        </div>
+        <button onclick="showCartForm()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition flex items-center gap-1">
+          <i data-lucide="plus" style="width:16px;height:16px"></i> Novo Carrinho
+        </button>
+      </div>
+      <div id="cart-form-area"></div>
+      
+      <div class="space-y-4">
+        ${carts.length===0?'<div class="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400"><p>Nenhum carrinho cadastrado.</p></div>':''}
+        ${carts.map(ct => {
+          const cartDevices = devices.filter(d => d.cart_id === ct.__backendId);
+          return `
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <h3 class="font-semibold text-white">${ct.cart_name}</h3>
+                <p class="text-sm text-slate-400">${ct.floor} ÔÇö ${ct.device_type} (${cartDevices.length} dispositivos)</p>
+              </div>
+              <div class="flex gap-2">
+                <button onclick="showAddDeviceForm('${ct.__backendId}')" class="px-3 py-1 text-xs bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded-lg transition flex items-center gap-1">
+                  <i data-lucide="plus" style="width:12px;height:12px"></i> Adicionar Dispositivo
+                </button>
+                <button onclick="confirmDeleteCart('${ct.__backendId}')" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
+                  <i data-lucide="trash-2" style="width:16px;height:16px"></i>
+                </button>
+              </div>
+            </div>
+            
+            <div id="add-device-form-${ct.__backendId}"></div>
+            
+            ${cartDevices.length === 0 ? '<div class="text-sm text-slate-500 italic">Nenhum dispositivo cadastrado neste carrinho.</div>' : `
+            <div class="grid gap-2 max-h-60 overflow-y-auto">
+              <div class="grid grid-cols-6 gap-2 text-xs font-medium text-slate-400 px-2 py-1">
+                <span>Posi├º├úo</span>
+                <span>N┬║ Patrim├┤nio</span>
+                <span>Marca</span>
+                <span class="col-span-2">Modelo</span>
+                <span class="text-right">A├º├úo</span>
+              </div>
+              ${cartDevices.map(dev => `
+                <div class="grid grid-cols-6 gap-2 items-center text-sm bg-slate-800/50 rounded-lg px-3 py-2">
+                  <span class="text-blue-400 font-medium">#${dev.device_number}</span>
+                  <span class="text-white font-medium">${dev.device_serial || '-'}</span>
+                  <span class="text-blue-400">${dev.device_brand}</span>
+                  <span class="col-span-2 text-slate-300">${dev.device_type || '-'}</span>
+                  <span class="text-right">
+                    <button onclick="deleteDevice('${dev.__backendId}')" class="p-1 text-red-400 hover:bg-red-500/20 rounded transition">
+                      <i data-lucide="trash-2" style="width:14px;height:14px"></i>
+                    </button>
+                  </span>
+                </div>
+              `).join('')}
+            </div>
+            `}
+          </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
+
+function showCartForm() {
+  isFormOpen = true;
+  const area = document.getElementById('cart-form-area');
+  area.innerHTML = `
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl p-5 mb-6 fade-in">
+      <h3 class="font-semibold text-white mb-3">Novo Carrinho</h3>
+      <div class="grid gap-3 sm:grid-cols-3">
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Nome do Carrinho</label>
+          <input id="new-cart-name" placeholder="Ex: Carrinho A" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Andar / Local</label>
+          <input id="new-cart-floor" placeholder="Ex: 2┬║ Andar" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Tipo de Dispositivo</label>
+          <select id="new-cart-type" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
+            <option>Notebook</option>
+            <option>Tablet</option>
+          </select>
+        </div>
+      </div>
+      <div class="flex gap-2 mt-4">
+        <button onclick="saveCart()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar</button>
+        <button onclick="isFormOpen = false; document.getElementById('cart-form-area').innerHTML=''" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
+      </div>
+    </div>
+  `;
+  lucide.createIcons();
+}
+
+
+function showAddDeviceForm(cartId) {
+  const area = document.getElementById(`add-device-form-${cartId}`);
+  area.innerHTML = `
+    <div class="bg-slate-700/50 border border-slate-600 rounded-xl p-3 mb-3 fade-in">
+      <div class="grid gap-2 sm:grid-cols-5 mb-2">
+        <div>
+          <label class="block text-xs text-slate-300 mb-1">Posi├º├úo (1-40)</label>
+          <select id="new-dev-number-${cartId}" class="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-xs text-white">
+            <option value="">Selecionar...</option>
+            ${Array.from({length:40},(_,i)=>i+1).map(n=>`<option value="${n}">#${n}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-slate-300 mb-1">N┬║ Patrim├┤nio</label>
+          <input id="new-dev-serial-${cartId}" placeholder="Ex: 12345" class="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-xs text-white">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-300 mb-1">Marca</label>
+          <select id="new-dev-brand-${cartId}" class="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-xs text-white">
+            <option value="Positivo">Positivo</option>
+            <option value="Samsung">Samsung</option>
+            <option value="Lenovo">Lenovo</option>
+            <option value="Outro">Outro</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-slate-300 mb-1">Modelo</label>
+          <input id="new-dev-model-${cartId}" placeholder="Ex: V14" class="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-xs text-white">
+        </div>
+        <div class="flex items-end gap-2">
+          <button onclick="saveDevice('${cartId}')" class="flex-1 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded-lg transition font-medium">Adicionar</button>
+          <button onclick="document.getElementById('add-device-form-${cartId}').innerHTML=''" class="px-3 py-2 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded-lg transition">Cancelar</button>
+        </div>
+      </div>
+    </div>
+  `;
+  lucide.createIcons();
+}
+
+
+async function saveCart() {
+  const name = document.getElementById('new-cart-name').value.trim();
+  const floor = document.getElementById('new-cart-floor').value.trim();
+  const dtype = document.getElementById('new-cart-type').value;
+  if (!name || !floor) { toast('Preencha todos os campos.','error'); return; }
+  if (allData.length >= 999) { toast('Limite de registros atingido.','error'); return; }
+
+
+  const r = await window.dataSdk.create({
+    type:'cart', cart_name:name, floor:floor, device_type:dtype,
+    name:'', email:'', password:'', role:'', device_number:0, device_brand:'', device_serial:'', cart_id:'',
+    reserved_by:'', reserved_email:'', date:'', period:'', status:'', created_at:new Date().toISOString()
+  });
+  if (r.isOk) { toast('Carrinho cadastrado!'); isFormOpen = false; document.getElementById('cart-form-area').innerHTML=''; }
+  else toast('Erro ao salvar.','error');
+}
+
+
+async function saveDevice(cartId) {
+  const deviceNumber = document.getElementById(`new-dev-number-${cartId}`).value.trim();
+  const serial = document.getElementById(`new-dev-serial-${cartId}`).value.trim();
+  const brand = document.getElementById(`new-dev-brand-${cartId}`).value;
+  const model = document.getElementById(`new-dev-model-${cartId}`).value.trim();
+  
+  if (!deviceNumber || !serial || !brand) { toast('Preencha os campos obrigat├│rios.','error'); return; }
+  // VALIDATION-4: garantir no front-end que o n├║mero est├í no range aceito pelo banco (1ÔÇô40).
+  // O SDK tamb├®m valida, mas um erro antecipado evita round-trip desnecess├írio.
+  const parsedNum = parseInt(deviceNumber);
+  if (isNaN(parsedNum) || parsedNum < 1 || parsedNum > 40) {
+    toast('ÔØî N├║mero do dispositivo deve ser entre 1 e 40.', 'error'); return;
+  }
+  if (allData.length >= 999) { toast('Limite de registros atingido.','error'); return; }
+
+
+  // Check if device number already exists in this cart
+  // BUG-2: normalizar para inteiro nos dois lados ÔÇö device_number vem como number do Supabase
+  // e como string do input HTML; a compara├º├úo sem cast falha silenciosamente.
+  const existingDevice = getDevices().find(d => String(d.cart_id) === String(cartId) && parseInt(d.device_number) === parseInt(deviceNumber));
+  if (existingDevice) { toast(`Posi├º├úo #${deviceNumber} j├í est├í cadastrada neste carrinho.`,'error'); return; }
+
+
+  const r = await window.dataSdk.create({
+    type:'device', cart_id:cartId, device_number:deviceNumber, device_serial:serial, device_brand:brand, device_type:model,
+    name:'', email:'', password:'', role:'', cart_name:'', floor:'',
+    reserved_by:'', reserved_email:'', date:'', period:'', status:'', created_at:new Date().toISOString()
+  });
+  if (r.isOk) { toast('Dispositivo adicionado na posi├º├úo #'+deviceNumber+'!'); document.getElementById(`add-device-form-${cartId}`).innerHTML=''; }
+  else toast('Erro ao salvar.','error');
+}
+
+
+// Exige que o usu├írio digite o nome do carrinho antes de excluir,
+// evitando exclus├Áes acidentais (padr├úo GitHub).
+function confirmDeleteCart(id) {
+  const cartName = getCarts().find(ct => ct.__backendId === id)?.cart_name || 'carrinho';
+  const existing = document.getElementById('delete-cart-modal');
+  if (existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'delete-cart-modal';
+  modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+  modal.innerHTML = `
+    <div class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+    <div class="relative bg-slate-900 border border-red-500/40 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0">
+          <i data-lucide="triangle-alert" style="width:20px;height:20px;color:#ef4444"></i>
+        </div>
+        <div>
+          <h3 class="font-bold text-white text-lg">Excluir carrinho?</h3>
+          <p class="text-xs text-slate-400">Esta a├º├úo n├úo pode ser desfeita</p>
+        </div>
+      </div>
+
+      <div class="bg-red-500/10 border border-red-500/20 rounded-xl p-4 mb-5 text-sm text-red-300 space-y-1">
+        <p>Ao excluir <span class="font-semibold text-white">${cartName}</span>, voc├¬ perder├í:</p>
+        <ul class="list-disc list-inside text-xs text-red-300/80 mt-2 space-y-0.5">
+          <li>Todos os dispositivos cadastrados neste carrinho</li>
+          <li>Todo o hist├│rico de reservas associado</li>
+        </ul>
+      </div>
+
+      <label class="block text-sm text-slate-300 mb-2">
+        Para confirmar, digite o nome do carrinho:
+        <span class="font-mono text-white bg-slate-800 px-1.5 py-0.5 rounded text-xs ml-1">${cartName}</span>
+      </label>
+      <input id="delete-cart-confirm-input" type="text" placeholder="Digite o nome exato..."
+        class="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500 mb-5
+               focus:outline-none focus:border-red-500 transition"
+        oninput="document.getElementById('delete-cart-btn').disabled = this.value !== '${cartName}'">
+
+      <div class="flex gap-3">
+        <button onclick="document.getElementById('delete-cart-modal').remove()"
+          class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition">
+          Cancelar
+        </button>
+        <button id="delete-cart-btn" disabled
+          onclick="document.getElementById('delete-cart-modal').remove(); deleteCart('${id}')"
+          class="flex-1 px-4 py-2 bg-red-600 text-white font-medium rounded-lg transition
+                 disabled:opacity-30 disabled:cursor-not-allowed hover:enabled:bg-red-700">
+          Excluir permanentemente
+        </button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  lucide.createIcons();
+  setTimeout(() => document.getElementById('delete-cart-confirm-input')?.focus(), 50);
+}
+
+
+async function deleteCart(id) {
+  const rec = allData.find(d => d.__backendId === id);
+  if (rec) {
+    const result = await window.dataSdk.delete(rec);
+    // ERROR-1: checar resultado antes de confirmar sucesso
+    if (result.isOk) { toast('Carrinho removido.'); }
+    else { toast('ÔØî Erro ao remover carrinho.', 'error'); }
+  }
+}
+
+
+async function deleteDevice(id) {
+  const rec = allData.find(d => d.__backendId === id);
+  if (rec) {
+    const result = await window.dataSdk.delete(rec);
+    // ERROR-1: checar resultado antes de confirmar sucesso
+    if (result.isOk) { toast('Dispositivo removido.'); }
+    else { toast('ÔØî Erro ao remover dispositivo.', 'error'); }
+  }
+}
+
+
+// ========== ADMIN: USUARIOS ==========
+function renderUsuarios(c) {
+  // Se o formul├írio estiver aberto, n├úo redesenhe a tela para evitar fech├í-lo.
+  const formArea = document.getElementById('user-form-area');
+  if (formArea && formArea.innerHTML.trim() !== '') {
+    return;
+  }
+  const users = getUsers();
+  const roleColors = {
+    'professor': 'bg-blue-500/20 text-blue-400',
+    'coordenador': 'bg-purple-500/20 text-purple-400',
+    'vice-diretor': 'bg-amber-500/20 text-amber-400',
+    'diretor': 'bg-red-500/20 text-red-400',
+    'admin': 'bg-emerald-500/20 text-emerald-400'
+  };
+  const roleLabels = {
+    'professor': 'Professor',
+    'coordenador': 'Coordenador',
+    'vice-diretor': 'Vice-Diretor',
+    'diretor': 'Diretor',
+    'admin': 'Administrador'
+  };
+  c.innerHTML = `
+    <div class="fade-in max-w-6xl mx-auto">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-xl font-bold flex items-center gap-2"><i data-lucide="users" style="width:22px;height:22px;color:#3b82f6"></i> Usu├írios</h2>
+          <p class="text-slate-400 text-sm">Gerencie usu├írios, perfis e contatos</p>
+        </div>
+        <button onclick="showUserForm()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition flex items-center gap-1">
+          <i data-lucide="plus" style="width:16px;height:16px"></i> Novo
+        </button>
+      </div>
+      <div id="user-form-area"></div>
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+        <div class="grid grid-cols-6 gap-2 px-4 py-2 text-xs font-medium text-slate-400 border-b border-slate-800">
+          <span>Nome</span><span>E-mail</span><span>Telefone</span><span>Perfil</span><span>Status</span><span></span>
+        </div>
+        ${users.length===0?'<div class="p-6 text-center text-slate-400 text-sm">Nenhum usu├írio cadastrado.</div>':''}
+        ${users.map(u => {
+          const isActive = u.user_status !== 'inativo';
+          return `
+          <div class="grid grid-cols-6 gap-2 px-4 py-3 border-b border-slate-800/50 items-center text-sm ${!isActive ? 'opacity-60' : ''}">
+            <span class="text-white truncate">${u.name}</span>
+            <span class="text-slate-400 truncate text-xs">${u.email}</span>
+            <span class="text-slate-400 text-xs">${u.phone || '-'}</span>
+            <span><span class="px-2 py-0.5 rounded-full text-xs ${roleColors[u.role] || 'bg-slate-700/20 text-slate-400'}">${roleLabels[u.role] || u.role}</span></span>
+            <span><span class="px-2 py-0.5 rounded-full text-xs ${isActive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-500/20 text-slate-400'}">${isActive ? 'Ativo' : 'Inativo'}</span></span>
+            <span class="text-right flex items-center justify-end gap-1">
+              <button onclick="editUser('${u.__backendId}')" class="p-2 text-amber-400 hover:bg-amber-500/20 rounded-lg transition" title="Editar usu├írio">
+                <i data-lucide="pencil" style="width:16px;height:16px"></i>
+              </button>
+              <button onclick="toggleUserStatus('${u.__backendId}', ${isActive})" class="p-2 ${isActive ? 'text-amber-400 hover:bg-amber-500/20' : 'text-emerald-400 hover:bg-emerald-500/20'} rounded-lg transition" title="${isActive ? 'Desativar' : 'Ativar'}">
+                <i data-lucide="${isActive ? 'power-off' : 'power'}" style="width:16px;height:16px"></i>
+              </button>
+            </span>
+          </div>
+        `;
+        }).join('')}
+      </div>
+      <p class="text-xs text-slate-500 mt-3">* Admin padr├úo: admin@escola.com / admin123 | Use o ├¡cone de energia para desativar/ativar usu├írios sem perder hist├│rico</p>
+    </div>
+  `;
+}
+
+
+function showUserForm() {
+  const area = document.getElementById('user-form-area');
+  area.innerHTML = `
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl p-5 mb-6 fade-in">
+      <h3 class="font-semibold text-white mb-3">Novo Usu├írio</h3>
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Nome Completo</label>
+          <input id="new-user-name" placeholder="Nome do usu├írio" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">E-mail</label>
+          <input id="new-user-email" type="email" placeholder="email@escola.com" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Telefone</label>
+          <input id="new-user-phone" type="tel" placeholder="(11) 99999-9999" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Senha</label>
+          <input id="new-user-pass" type="text" placeholder="Senha inicial" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Perfil</label>
+          <select id="new-user-role" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
+            <option value="professor">Professor</option>
+            <option value="coordenador">Coordenador</option>
+            <option value="vice-diretor">Vice-Diretor</option>
+            <option value="diretor">Diretor</option>
+            <option value="admin">Administrador</option>
+          </select>
+        </div>
+      </div>
+      <div class="flex gap-2 mt-4">
+        <button onclick="saveUser()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar</button>
+        <button onclick="document.getElementById('user-form-area').innerHTML=''" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
+      </div>
+    </div>
+  `;
+  lucide.createIcons();
+}
+
+
+async function saveUser() {
+  const name = document.getElementById('new-user-name').value.trim();
+  const email = document.getElementById('new-user-email').value.trim().toLowerCase();
+  const phone = document.getElementById('new-user-phone').value.trim();
+  const pass = document.getElementById('new-user-pass').value;
+  const role = document.getElementById('new-user-role').value;
+  if (!name||!email||!pass) { toast('Preencha todos os campos.','error'); return; }
+  if (getUsers().find(u=>u.email===email)) { toast('E-mail j├í cadastrado.','error'); return; }
+  if (allData.length >= 999) { toast('Limite de registros atingido.','error'); return; }
+
+
+  // --- SUPABASE AUTH MODE ---
+  if (isSupabaseMode()) {
+    try {
+      const supabase = getSupabaseClient();
+
+      // Save current admin session (both tokens) to restore after signUp
+      const { data: { session: adminSession } } = await supabase.auth.getSession();
+      const adminAccessToken  = adminSession?.access_token  || null;
+      const adminRefreshToken = adminSession?.refresh_token || null;
+
+      // Create user in Supabase Auth ÔÇö the trigger handle_new_user()
+      // will auto-create the profile in public.profiles
+      const { data, error } = await supabase.auth.signUp({
+        email: email,
+        password: pass,
+        options: {
+          data: {
+            name: name,
+            role: role,
+            phone: phone || ''
+          }
+        }
+      });
+
+      if (error) {
+        console.error('Supabase Auth signUp error:', error);
+        toast('ÔØî Erro ao criar usu├írio: ' + error.message, 'error');
+        return;
+      }
+
+      // Problema 3: se o projeto exige confirma├º├úo de e-mail, o usu├írio
+      // criado n├úo ter├í sess├úo ativa ÔÇö avisar o admin claramente.
+      const needsConfirmation = data?.user && !data?.session;
+      if (needsConfirmation) {
+        toast('ÔÜá´©Å Usu├írio criado, mas precisa confirmar o e-mail antes de acessar o sistema.', 'warning');
+      }
+
+      // Restaurar sess├úo do admin: setSession() exige access_token + refresh_token.
+      // Usar apenas refresh_token faz a chamada falhar silenciosamente.
+      if (adminAccessToken && adminRefreshToken) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData?.session?.user?.email !== adminSession?.user?.email) {
+          await supabase.auth.setSession({
+            access_token:  adminAccessToken,
+            refresh_token: adminRefreshToken
+          });
+        }
+      }
+
+      if (!needsConfirmation) toast('Ô£à Usu├írio cadastrado com sucesso!');
+      document.getElementById('user-form-area').innerHTML='';
+      navigate('usuarios');
+    } catch (err) {
+      console.error('Erro ao salvar usu├írio (Supabase):', err);
+      toast('ÔØî Erro ao salvar usu├írio.','error');
+    }
+    return;
+  }
+
+
+  // --- LEGACY MODE (Express API fallback) ---
+  try {
+    const r = await window.dataSdk.create({
+      type:'user', name, email, password:pass, role, phone, user_status:'ativo',
+      cart_name:'', floor:'', device_type:'', device_number:0, reserved_by:'', reserved_email:'', date:'', period:'', status:'', created_at:new Date().toISOString(), device_brand:'', device_serial:'', cart_id:''
+    });
+    if (r.isOk) {
+      toast('Ô£à Usu├írio cadastrado com sucesso!');
+      document.getElementById('user-form-area').innerHTML='';
+      navigate('usuarios');
+    } else {
+      toast('ÔØî Erro ao salvar usu├írio.','error');
+    }
+  } catch (err) {
+    console.error('Erro ao salvar usu├írio:', err);
+    toast('ÔØî Erro ao salvar usu├írio.','error');
+  }
+}
+
+
+async function deleteUser(id) {
+  const rec = allData.find(d => d.__backendId === id);
+  if (rec) {
+    const result = await window.dataSdk.delete(rec);
+    // ERROR-1: checar resultado antes de confirmar sucesso
+    if (result.isOk) { toast('Usu├írio removido permanentemente.'); }
+    else { toast('ÔØî Erro ao remover usu├írio.', 'error'); }
+  }
+}
+
+
+async function toggleUserStatus(id, isCurrentlyActive) {
+  const user = getUsers().find(u => u.__backendId === id);
+  if (!user) return;
+  
+  const newStatus = isCurrentlyActive ? 'inativo' : 'ativo';
+  const updatedUser = {
+    ...user,
+    user_status: newStatus
+  };
+
+
+  const r = await window.dataSdk.update(updatedUser);
+  if (r.isOk) {
+    const msg = newStatus === 'ativo' ? 'Usu├írio reativado!' : 'Usu├írio desativado! (hist├│rico preservado)';
+    toast(msg);
+    navigate('usuarios');
+  } else {
+    toast('Erro ao atualizar status.','error');
+  }
+}
+
+
+function editUser(id) {
+  const user = getUsers().find(u => u.__backendId === id);
+  if (!user) return;
+  
+  const area = document.getElementById('user-form-area');
+  area.innerHTML = `
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl p-5 mb-6 fade-in">
+      <h3 class="font-semibold text-white mb-3">Editar Usu├írio</h3>
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Nome Completo</label>
+          <input id="edit-user-name" value="${user.name}" placeholder="Nome do usu├írio" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">E-mail</label>
+          <input id="edit-user-email" type="email" value="${user.email}" placeholder="email@escola.com" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Telefone</label>
+          <input id="edit-user-phone" type="tel" value="${user.phone || ''}" placeholder="(11) 99999-9999" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Senha</label>
+          <input id="edit-user-pass" type="text" value="${user.password}" placeholder="Senha" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Perfil</label>
+          <select id="edit-user-role" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
+            <option value="professor" ${user.role==='professor'?'selected':''}>Professor</option>
+            <option value="coordenador" ${user.role==='coordenador'?'selected':''}>Coordenador</option>
+            <option value="vice-diretor" ${user.role==='vice-diretor'?'selected':''}>Vice-Diretor</option>
+            <option value="diretor" ${user.role==='diretor'?'selected':''}>Diretor</option>
+            <option value="admin" ${user.role==='admin'?'selected':''}>Administrador</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Status</label>
+          <select id="edit-user-status" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
+            <option value="ativo" ${user.user_status==='ativo' || !user.user_status ? 'selected':''}>Ativo</option>
+            <option value="inativo" ${user.user_status==='inativo'?'selected':''}>Inativo</option>
+          </select>
+        </div>
+      </div>
+      <div class="flex gap-2 mt-4">
+        <button onclick="updateUser('${id}')" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar Altera├º├Áes</button>
+        <button onclick="document.getElementById('user-form-area').innerHTML=''" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
+      </div>
+    </div>
+  `;
+  lucide.createIcons();
+}
+
+
+async function updateUser(id) {
+  const user = getUsers().find(u => u.__backendId === id);
+  if (!user) return;
+
+
+  const name = document.getElementById('edit-user-name').value.trim();
+  const email = document.getElementById('edit-user-email').value.trim().toLowerCase();
+  const phone = document.getElementById('edit-user-phone').value.trim();
+  const pass = document.getElementById('edit-user-pass').value;
+  const role = document.getElementById('edit-user-role').value;
+  const status = document.getElementById('edit-user-status').value;
+
+
+  if (!name || !email || !pass) { 
+    toast('Preencha todos os campos.','error'); 
+    return; 
+  }
+
+
+  // Check if email already exists for another user
+  const existingEmail = getUsers().find(u => u.email === email && u.__backendId !== id);
+  if (existingEmail) { 
+    toast('E-mail j├í cadastrado por outro usu├írio.','error'); 
+    return; 
+  }
+
+
+  const updatedUser = {
+    ...user,
+    name,
+    email,
+    phone,
+    password: pass,
+    role,
+    user_status: status
+  };
+
+
+  const r = await window.dataSdk.update(updatedUser);
+  if (r.isOk) {
+    toast('Usu├írio atualizado com sucesso!');
+    document.getElementById('user-form-area').innerHTML = '';
+    navigate('usuarios');
+  } else {
+    toast('Erro ao atualizar.','error');
+  }
+}
+
+
+// ========== ADMIN: MONITORAMENTO ==========
+function renderMonitor(c) {
+  const today = todayStr();
+  const carts = getCarts();
+  const todayRes = getReservations().filter(r => r.date === today && r.status === 'active');
+
+
+  // Figure out current period ÔÇö derived dynamically from PERIODS strings
+  // so it stays correct when the school customizes its schedule via the
+  // "Hor├írios" admin panel. Each period label is expected to contain a
+  // (HH:MM-HH:MM) range; periods without that pattern are skipped.
+  const now = new Date();
+  const mins = now.getHours() * 60 + now.getMinutes();
+  let currentPeriod = '';
+  for (const period of PERIODS) {
+    const m = period.match(/\((\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\)/);
+    if (!m) continue;
+    const startMins = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+    const endMins   = parseInt(m[3], 10) * 60 + parseInt(m[4], 10);
+    if (mins >= startMins && mins < endMins) {
+      currentPeriod = period;
+      break;
+    }
+  }
+
+  // Per├¡odo exibido ÔÇö segue o rel├│gio se o usu├írio n├úo escolheu outro.
+  // Se o per├¡odo selecionado n├úo existir mais (ex: admin removeu hor├írios),
+  // fazemos fallback gracioso para o per├¡odo atual.
+  const validSelected = selectedMonitorPeriod && PERIODS.includes(selectedMonitorPeriod)
+    ? selectedMonitorPeriod : null;
+  const displayPeriod = validSelected || currentPeriod;
+  const isLive = !!currentPeriod && displayPeriod === currentPeriod;
+
+  // Helpers visuais p/ chips da timeline.
+  function shortLabel(p) {
+    if (p.startsWith('Intervalo')) return 'Int.';
+    const m = p.match(/^(\d+)/);
+    return m ? m[1] + '┬║' : p.slice(0, 4);
+  }
+  function timeRange(p) {
+    const m = p.match(/\((\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})\)/);
+    return m ? m[1] + 'ÔÇô' + m[2] : '';
+  }
+
+  // Contagem de reservas por per├¡odo (para o pontinho indicador nos chips).
+  const resByPeriod = {};
+  todayRes.forEach(r => { resByPeriod[r.period] = (resByPeriod[r.period] || 0) + 1; });
+
+  // Timeline horizontal ÔÇö uma "chip" por per├¡odo no dia.
+  const timelineHtml = PERIODS.map((p, i) => {
+    const isCurrent = p === currentPeriod;
+    const isSelected = p === displayPeriod;
+    const isInterval = p.startsWith('Intervalo');
+    const count = resByPeriod[p] || 0;
+
+    if (isInterval) {
+      // Intervalos: separador visual, n├úo clic├íveis (n├úo recebem reservas na pr├ítica).
+      return `
+        <div class="flex-shrink-0 flex flex-col items-center justify-center px-2 py-2 text-slate-500 select-none" title="${p}">
+          <span class="text-[10px] uppercase tracking-wider">int.</span>
+          <span class="text-[10px] text-slate-600">${timeRange(p)}</span>
+        </div>`;
+    }
+
+    const baseCls = 'flex-shrink-0 flex flex-col items-center px-3 py-1.5 rounded-lg transition cursor-pointer border min-w-[62px]';
+    let cls = 'border-slate-700 bg-slate-800/40 text-slate-300 hover:bg-slate-700/60';
+    if (isSelected && isCurrent) {
+      cls = 'border-emerald-400 bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/60';
+    } else if (isSelected) {
+      cls = 'border-blue-400 bg-blue-500/20 text-blue-100 ring-1 ring-blue-400/60';
+    } else if (isCurrent) {
+      cls = 'border-emerald-500/50 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20';
+    }
+
+    const dot = count > 0
+      ? `<span class="mt-0.5 w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-white' : (isCurrent ? 'bg-emerald-300' : 'bg-blue-400')}"></span>`
+      : '<span class="mt-0.5 w-1.5 h-1.5"></span>';
+
+    return `
+      <button onclick="setMonitorPeriodByIndex(${i})" class="${baseCls} ${cls}" title="${p}${count?' ÔÇö '+count+' reserva(s)':''}">
+        <span class="font-semibold text-xs leading-tight">${shortLabel(p)}</span>
+        <span class="text-[10px] opacity-70 leading-tight">${timeRange(p)}</span>
+        ${dot}
+      </button>`;
+  }).join('');
+
+
+  c.innerHTML = `
+    <div class="fade-in max-w-6xl mx-auto">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h2 class="text-xl font-bold flex items-center gap-2"><i data-lucide="activity" style="width:22px;height:22px;color:#3b82f6"></i> Monitoramento em Tempo Real</h2>
+          <p class="text-slate-400 text-sm">
+            ${new Date().toLocaleDateString('pt-BR')}
+            ${displayPeriod ? 'ÔÇö '+displayPeriod : ''}
+            ${displayPeriod ? (isLive
+                ? '<span class="ml-2 text-[10px] uppercase tracking-wider bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded">Agora</span>'
+                : '<span class="ml-2 text-[10px] uppercase tracking-wider bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded">Pr├®-visualiza├º├úo</span>'
+              ) : ''}
+          </p>
+        </div>
+        <span class="flex items-center gap-1 text-xs text-emerald-400"><span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot inline-block"></span> Online</span>
+      </div>
+
+      <!-- TIMELINE: mapa do dia inteiro -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-3 mb-6">
+        <div class="flex items-center justify-between mb-2 px-1 flex-wrap gap-2">
+          <span class="text-xs text-slate-400 font-medium">Mapa do dia ÔÇö clique em uma aula para visualizar a ocupa├º├úo</span>
+          ${!isLive && currentPeriod ? '<button onclick="monitorGoLive()" class="text-xs bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 px-3 py-1 rounded-lg flex items-center gap-1 transition"><i data-lucide="radio" style="width:12px;height:12px"></i> Voltar para Agora</button>' : ''}
+        </div>
+        <div class="flex items-stretch gap-1.5 overflow-x-auto pb-1">
+          ${timelineHtml}
+        </div>
+        <div class="flex items-center gap-3 text-[10px] text-slate-500 mt-2 px-1 flex-wrap">
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-emerald-500/40 border border-emerald-400"></span> aula atual</span>
+          <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-blue-500/40 border border-blue-400"></span> selecionado</span>
+          <span class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-blue-400"></span> tem reservas</span>
+        </div>
+      </div>
+
+
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        <div class="stat-card border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400">Total Reservas Hoje</p>
+          <p class="text-2xl font-bold text-white">${todayRes.length}</p>
+        </div>
+        <div class="stat-card border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400">Carrinhos Ativos</p>
+          <p class="text-2xl font-bold text-white">${new Set(todayRes.map(r=>r.cart_name)).size}/${carts.length}</p>
+        </div>
+        <div class="stat-card border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400">${isLive ? 'Dispositivos em Uso' : 'Reservas no per├¡odo'}</p>
+          <p class="text-2xl font-bold text-white">${displayPeriod ? todayRes.filter(r=>r.period===displayPeriod).length : 0}</p>
+        </div>
+        <div class="stat-card border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400">Professores</p>
+          <p class="text-2xl font-bold text-white">${new Set(todayRes.map(r=>r.reserved_email)).size}</p>
+        </div>
+      </div>
+
+
+      ${carts.map(ct => {
+        const cartRes = todayRes.filter(r => r.cart_name === ct.cart_name && (displayPeriod ? r.period === displayPeriod : true));
+        const reservedNums = new Set(cartRes.map(r => r.device_number));
+        return `
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 mb-4">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-semibold text-white">${ct.cart_name} <span class="text-slate-400 text-xs font-normal">${ct.floor} ÔÇö ${ct.device_type}</span></h3>
+            <span class="text-xs text-slate-400">${reservedNums.size}/40 ${isLive ? 'em uso' : 'reservados'}</span>
+          </div>
+          <div class="grid grid-cols-8 sm:grid-cols-10 gap-1">
+            ${Array.from({length:40},(_,i)=>i+1).map(n => {
+              const res = cartRes.find(r=>parseInt(r.device_number)===n);
+              return `<button onclick="showDeviceSchedule('${ct.cart_name}', ${n})" class="rounded-lg p-1 text-center text-xs cursor-pointer transition ${res?'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30':'bg-blue-500/10 text-blue-400/60 border border-slate-800 hover:bg-blue-500/20 hover:text-blue-300'}" title="Ver agenda ÔÇö ${ct.device_type} #${n}">${n}</button>`;
+            }).join('')}
+          </div>
+          ${cartRes.length > 0 ? `
+          <div class="mt-3 border-t border-slate-800 pt-3">
+            <p class="text-xs text-slate-400 mb-2">${isLive ? 'Em uso agora:' : 'Reservas neste per├¡odo:'}</p>
+            <div class="space-y-1">
+              ${[...new Set(cartRes.map(r=>r.reserved_email))].map(email => {
+                const userRes = cartRes.filter(r=>r.reserved_email===email);
+                const turmaTag = userRes[0].turma ? `<span class="ml-1.5 text-[10px] bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded">${userRes[0].turma}</span>` : '';
+                return `<div class="flex items-center justify-between text-xs bg-slate-800/50 rounded-lg px-3 py-2">
+                  <span class="text-white flex items-center gap-1">${userRes[0].reserved_by}${turmaTag}</span>
+                  <span class="text-slate-400">Dispositivos: ${userRes.map(r=>'#'+r.device_number).join(', ')}</span>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>` : ''}
+        </div>`;
+      }).join('')}
+    </div>
+  `;
+}
+
+
+// Trocar o per├¡odo exibido no Monitoramento. Usamos ├¡ndice em PERIODS p/
+// evitar problemas de escape no `onclick` (os r├│tulos cont├¬m par├¬nteses).
+function setMonitorPeriodByIndex(i) {
+  const p = PERIODS[i];
+  if (!p) return;
+  selectedMonitorPeriod = p;
+  renderCurrentView();
+}
+
+// Voltar ao modo "tempo real": volta a seguir o rel├│gio.
+function monitorGoLive() {
+  selectedMonitorPeriod = null;
+  renderCurrentView();
+}
+
+// Exibe um modal com a agenda completa do dia para um dispositivo espec├¡fico.
+// Mostra todos os per├¡odos (exceto intervalos) e se est├úo livres ou reservados.
+function showDeviceSchedule(cartName, deviceNum) {
+  const today = todayStr();
+  const allRes = getReservations().filter(r =>
+    r.date === today &&
+    r.status === 'active' &&
+    r.cart_name === cartName &&
+    parseInt(r.device_number) === deviceNum
+  );
+
+  const resByPeriod = {};
+  allRes.forEach(r => { resByPeriod[r.period] = r; });
+
+  const periodsHtml = PERIODS.map(p => {
+    if (p.startsWith('Intervalo')) {
+      return `<div class="text-[10px] text-slate-600 uppercase tracking-wider py-1 px-2">${p}</div>`;
+    }
+    const res = resByPeriod[p];
+    return `
+      <div class="flex items-center justify-between rounded-lg px-3 py-2 ${res ? 'bg-red-500/10 border border-red-500/20' : 'bg-slate-800/50 border border-slate-700/50'}">
+        <span class="text-xs text-slate-300">${p}</span>
+        ${res
+          ? `<span class="text-xs text-red-300 font-medium" title="${res.reserved_by}">${res.reserved_by.split(' ')[0]}${res.turma ? ` ┬À <span class='text-blue-300'>${res.turma}</span>` : ''}</span>`
+          : `<span class="text-xs text-emerald-400">Livre</span>`
+        }
+      </div>`;
+  }).join('');
+
+  const existing = document.getElementById('device-schedule-modal');
+  if (existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'device-schedule-modal';
+  modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+  modal.innerHTML = `
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeDeviceModal()"></div>
+    <div class="relative bg-slate-900 border border-slate-700 rounded-2xl p-5 w-full max-w-sm shadow-2xl">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h3 class="font-bold text-white">Computador #${deviceNum}</h3>
+          <p class="text-xs text-slate-400">${cartName} ÔÇö agenda do dia</p>
+        </div>
+        <button onclick="closeDeviceModal()" class="text-slate-400 hover:text-white transition">
+          <i data-lucide="x" style="width:18px;height:18px"></i>
+        </button>
+      </div>
+      <div class="space-y-1.5 max-h-80 overflow-y-auto pr-1">
+        ${periodsHtml}
+      </div>
+      <div class="flex items-center gap-3 mt-4 text-[10px] text-slate-500">
+        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-red-500/30 border border-red-500/40"></span> reservado</span>
+        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-slate-800 border border-slate-700"></span> livre</span>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  lucide.createIcons();
+}
+
+// Fecha o modal de agenda do dispositivo.
+function closeDeviceModal() {
+  const modal = document.getElementById('device-schedule-modal');
+  if (modal) modal.remove();
+}
+
+
+// ========== ADMIN: GERENCIAR RESERVAS ==========
+function renderGerenciar(c) {
+  const reservations = getReservations().filter(r => r.status === 'active');
+  const today = todayStr();
+
+  // Group by date+cart+user for better readability
+  // Separate today vs future vs past
+  const past = reservations.filter(r => r.date < today).sort((a,b) => b.date.localeCompare(a.date));
+  const todayRes = reservations.filter(r => r.date === today);
+  const future = reservations.filter(r => r.date > today).sort((a,b) => a.date.localeCompare(b.date));
+
+  function groupReservations(list) {
+    const groups = {};
+    list.forEach(r => {
+      const key = `${r.date}|${r.cart_name}|${r.reserved_email}`;
+      if (!groups[key]) groups[key] = { date: r.date, cart: r.cart_name, floor: r.floor, user: r.reserved_by, email: r.reserved_email, devices: new Set(), periods: new Set(), ids: [] };
+      groups[key].devices.add(r.device_number);
+      groups[key].periods.add(r.period);
+      groups[key].ids.push(r.__backendId);
+    });
+    return Object.values(groups);
+  }
+
+  function renderGroup(groups, emptyMsg) {
+    if (groups.length === 0) return `<p class="text-sm text-slate-500 italic px-2">${emptyMsg}</p>`;
+    return groups.map(g => {
+      const dateObj = new Date(g.date + 'T12:00:00');
+      const dateStr = dateObj.toLocaleDateString('pt-BR');
+      const isPast = g.date < today;
+      return `
+        <div class="flex items-center justify-between bg-slate-800/60 border border-slate-700/50 rounded-xl px-4 py-3 gap-3">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-white text-sm font-medium truncate">${g.user}</span>
+              ${isPast ? '<span class="text-xs bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full">Vencida</span>' : ''}
+            </div>
+            <div class="text-xs text-slate-400 mt-0.5">${g.cart} ┬À ${g.floor} ┬À ${dateStr}</div>
+            <div class="text-xs text-slate-500 mt-0.5">
+              Disp: ${[...g.devices].sort((a,b)=>a-b).map(d=>'#'+d).join(', ')} &nbsp;┬À&nbsp; ${g.periods.size} per├¡odo(s)
+            </div>
+          </div>
+          <div class="flex gap-2 flex-shrink-0">
+            <button onclick="adminFinalizeReservation('${g.ids.join(',')}')"
+              class="px-3 py-1.5 text-xs bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 rounded-lg transition flex items-center gap-1">
+              <i data-lucide="check" style="width:12px;height:12px"></i> Liberar
+            </button>
+            <button onclick="adminCancelReservation('${g.ids.join(',')}')"
+              class="px-3 py-1.5 text-xs bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition flex items-center gap-1">
+              <i data-lucide="trash-2" style="width:12px;height:12px"></i> Excluir
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  c.innerHTML = `
+    <div class="fade-in max-w-4xl mx-auto">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-xl font-bold flex items-center gap-2">
+            <i data-lucide="shield-check" style="width:22px;height:22px;color:#3b82f6"></i> Gerenciar Reservas
+          </h2>
+          <p class="text-slate-400 text-sm">Visualize e libere reservas de todos os usu├írios</p>
+        </div>
+        <span class="text-xs bg-blue-500/20 text-blue-400 px-3 py-1.5 rounded-full font-medium">${reservations.length} ativa(s)</span>
+      </div>
+
+      <div class="space-y-6">
+        <!-- VENCIDAS -->
+        ${past.length > 0 ? `
+        <div class="bg-slate-900 border border-amber-500/30 rounded-2xl p-5">
+          <h3 class="text-sm font-semibold text-amber-400 mb-3 flex items-center gap-2">
+            <i data-lucide="alert-triangle" style="width:16px;height:16px"></i>
+            Reservas Vencidas (${past.length} registro(s)) ÔÇö dispositivos ainda n├úo devolvidos
+          </h3>
+          <div class="space-y-2">${renderGroup(groupReservations(past), '')}</div>
+        </div>` : ''}
+
+        <!-- HOJE -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <h3 class="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+            <i data-lucide="calendar" style="width:16px;height:16px;color:#3b82f6"></i>
+            Hoje ÔÇö ${new Date().toLocaleDateString('pt-BR')}
+          </h3>
+          <div class="space-y-2">${renderGroup(groupReservations(todayRes), 'Nenhuma reserva para hoje.')}</div>
+        </div>
+
+        <!-- FUTURAS -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <h3 class="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+            <i data-lucide="calendar-clock" style="width:16px;height:16px;color:#8b5cf6"></i>
+            Pr├│ximas reservas
+          </h3>
+          <div class="space-y-2">${renderGroup(groupReservations(future), 'Nenhuma reserva futura.')}</div>
+        </div>
+      </div>
+    </div>
+  `;
+  lucide.createIcons();
+}
+
+async function adminFinalizeReservation(idsStr) {
+  if (isLoading) return;
+  isLoading = true;
+  const ids = idsStr.split(',');
+  window.dataSdk.beginBatch();
+  for (const id of ids) {
+    const rec = allData.find(d => d.__backendId === id);
+    if (rec) await window.dataSdk.update({ ...rec, status: 'completed' });
+  }
+  window.dataSdk.endBatch();
+  isLoading = false;
+  toast('Ô£à Dispositivos liberados com sucesso!');
+  navigate('gerenciar');
+}
+
+async function adminCancelReservation(idsStr) {
+  if (isLoading) return;
+  isLoading = true;
+  const ids = idsStr.split(',');
+  window.dataSdk.beginBatch();
+  let hasError = false;
+  for (const id of ids) {
+    const rec = allData.find(d => d.__backendId === id);
+    if (rec) {
+      const result = await window.dataSdk.delete(rec);
+      if (!result.isOk) hasError = true;
+    }
+  }
+  window.dataSdk.endBatch();
+  isLoading = false;
+  if (hasError) {
+    toast('ÔÜá´©Å Erro ao excluir uma ou mais reservas.', 'error');
+  } else {
+    toast('Reserva exclu├¡da.');
+    navigate('gerenciar');
+  }
+}
+
+// ========== ADMIN: RELAT├ôRIO ==========
+function renderRelatorio(c) {
+  const reservations = getReservations();
+  const today = todayStr();
+
+
+  // Stats
+  const thisMonth = reservations.filter(r => r.date && r.date.substring(0,7) === today.substring(0,7));
+  const byUser = {};
+  thisMonth.forEach(r => { byUser[r.reserved_email] = (byUser[r.reserved_email]||0)+1; });
+  const byCart = {};
+  thisMonth.forEach(r => { byCart[r.cart_name] = (byCart[r.cart_name]||0)+1; });
+  const byPeriod = {};
+  thisMonth.forEach(r => { byPeriod[r.period] = (byPeriod[r.period]||0)+1; });
+
+
+  const topUsers = Object.entries(byUser).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  const topCarts = Object.entries(byCart).sort((a,b)=>b[1]-a[1]);
+  const topPeriods = Object.entries(byPeriod).sort((a,b)=>b[1]-a[1]);
+
+
+  const maxPeriod = topPeriods.length > 0 ? topPeriods[0][1] : 1;
+
+
+  c.innerHTML = `
+    <div class="fade-in max-w-5xl mx-auto">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-xl font-bold flex items-center gap-2"><i data-lucide="bar-chart-2" style="width:22px;height:22px;color:#3b82f6"></i> Relat├│rios</h2>
+          <p class="text-slate-400 text-sm">Dados do m├¬s atual</p>
+        </div>
+        <button onclick="exportCSV()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-xl transition flex items-center gap-1">
+          <i data-lucide="download" style="width:16px;height:16px"></i> Exportar CSV
+        </button>
+      </div>
+
+
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
+        <div class="stat-card border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400">Reservas no M├¬s</p>
+          <p class="text-2xl font-bold text-white">${thisMonth.length}</p>
+        </div>
+        <div class="stat-card border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400">Professores Ativos</p>
+          <p class="text-2xl font-bold text-white">${Object.keys(byUser).length}</p>
+        </div>
+        <div class="stat-card border border-slate-800 rounded-xl p-4">
+          <p class="text-xs text-slate-400">Carrinhos Utilizados</p>
+          <p class="text-2xl font-bold text-white">${Object.keys(byCart).length}</p>
+        </div>
+      </div>
+
+
+      <div class="grid gap-4 md:grid-cols-2 mb-6">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <h3 class="font-semibold text-white text-sm mb-3">Uso por Hor├írio</h3>
+          <div class="space-y-2">
+            ${topPeriods.map(([p,count]) => `
+              <div class="flex items-center gap-2">
+                <span class="text-xs text-slate-400 w-40 truncate flex-shrink-0">${p.split('(')[0].trim()}</span>
+                <div class="flex-1 bg-slate-800 rounded-full h-4 overflow-hidden">
+                  <div class="bg-blue-500 h-full rounded-full" style="width:${(count/maxPeriod)*100}%"></div>
+                </div>
+                <span class="text-xs text-slate-300 w-8 text-right">${count}</span>
+              </div>
+            `).join('')}
+            ${topPeriods.length===0?'<p class="text-sm text-slate-500">Sem dados.</p>':''}
+          </div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+          <h3 class="font-semibold text-white text-sm mb-3">Top Professores</h3>
+          <div class="space-y-2">
+            ${topUsers.map(([email,count],i) => {
+              const res = thisMonth.find(r=>r.reserved_email===email);
+              return `<div class="flex items-center justify-between text-sm bg-slate-800/50 rounded-lg px-3 py-2">
+                <span class="text-white"><span class="text-slate-500 mr-2">${i+1}.</span>${res?.reserved_by||email}</span>
+                <span class="text-blue-400 text-xs font-medium">${count} reservas</span>
+              </div>`;
+            }).join('')}
+            ${topUsers.length===0?'<p class="text-sm text-slate-500">Sem dados.</p>':''}
+          </div>
+        </div>
+      </div>
+
+
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+        <h3 class="font-semibold text-white text-sm mb-3">Uso por Carrinho</h3>
+        <div class="grid gap-3 sm:grid-cols-2">
+          ${topCarts.map(([name,count]) => `
+            <div class="flex items-center justify-between bg-slate-800/50 rounded-lg px-4 py-3">
+              <span class="text-white text-sm">${name}</span>
+              <span class="text-blue-400 text-sm font-medium">${count} reservas</span>
+            </div>
+          `).join('')}
+          ${topCarts.length===0?'<p class="text-sm text-slate-500 col-span-2 text-center">Sem dados.</p>':''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+
+function exportCSV() {
+  const reservations = getReservations();
+  if (reservations.length === 0) { toast('Sem dados para exportar.','error'); return; }
+  let csv = 'Data,Carrinho,Andar,Tipo,Dispositivo,Professor,Email,Hor├írio,Status\n';
+  reservations.forEach(r => {
+    csv += `${r.date},"${r.cart_name}","${r.floor}",${r.device_type},${r.device_number},"${r.reserved_by}",${r.reserved_email},"${r.period}",${r.status}\n`;
+  });
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'relatorio_reservas.csv'; a.click();
+  URL.revokeObjectURL(url);
+  toast('Relat├│rio exportado!');
+}
+
+
+// Init icons
+document.addEventListener('DOMContentLoaded', () => { lucide.createIcons(); });
+tailwind.config={theme:{extend:{}}}

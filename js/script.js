@@ -1242,8 +1242,8 @@ function renderCarrinhos(c) {
         ${carts.map(ct => {
           const cartDevices = devices.filter(d => d.cart_id === ct.__backendId);
           return `
-          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-            <div class="flex items-center justify-between mb-4">
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5" id="cart-card-${ct.__backendId}">
+            <div class="flex items-center justify-between mb-4 cart-header">
               <div>
                 <h3 class="font-semibold text-white">${ct.cart_name}</h3>
                 <p class="text-sm text-slate-400">${ct.floor} — ${ct.device_type} (${cartDevices.length} dispositivos)</p>
@@ -1251,6 +1251,9 @@ function renderCarrinhos(c) {
               <div class="flex gap-2">
                 <button onclick="showAddDeviceForm('${ct.__backendId}')" class="px-3 py-1 text-xs bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded-lg transition flex items-center gap-1">
                   <i data-lucide="plus" style="width:12px;height:12px"></i> Adicionar Dispositivo
+                </button>
+                <button onclick="editCart('${ct.__backendId}')" class="p-2 text-amber-400 hover:bg-amber-500/20 rounded-lg transition" title="Editar carrinho">
+                  <i data-lucide="pencil" style="width:16px;height:16px"></i>
                 </button>
                 <button onclick="deleteCart('${ct.__backendId}')" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
                   <i data-lucide="trash-2" style="width:16px;height:16px"></i>
@@ -1270,12 +1273,15 @@ function renderCarrinhos(c) {
                 <span class="text-right">Ação</span>
               </div>
               ${cartDevices.map(dev => `
-                <div class="grid grid-cols-6 gap-2 items-center text-sm bg-slate-800/50 rounded-lg px-3 py-2">
+                <div class="grid grid-cols-6 gap-2 items-center text-sm bg-slate-800/50 rounded-lg px-3 py-2" id="device-row-${dev.__backendId}">
                   <span class="text-blue-400 font-medium">#${dev.device_number}</span>
                   <span class="text-white font-medium">${dev.device_serial || '-'}</span>
                   <span class="text-blue-400">${dev.device_brand}</span>
                   <span class="col-span-2 text-slate-300">${dev.device_type || '-'}</span>
-                  <span class="text-right">
+                  <span class="text-right flex items-center justify-end gap-1">
+                    <button onclick="editDevice('${dev.__backendId}')" class="p-1 text-amber-400 hover:bg-amber-500/20 rounded transition" title="Editar dispositivo">
+                      <i data-lucide="pencil" style="width:14px;height:14px"></i>
+                    </button>
                     <button onclick="deleteDevice('${dev.__backendId}')" class="p-1 text-red-400 hover:bg-red-500/20 rounded transition">
                       <i data-lucide="trash-2" style="width:14px;height:14px"></i>
                     </button>
@@ -1290,6 +1296,168 @@ function renderCarrinhos(c) {
       </div>
     </div>
   `;
+}
+
+
+function editCart(id) {
+  const ct = getCarts().find(c => c.__backendId === id);
+  if (!ct) return;
+
+  // Encontrar o card do carrinho e substituir o cabeçalho pelo formulário de edição
+  const cartCard = document.querySelector(`#cart-card-${CSS.escape(id)} .cart-header`);
+  if (!cartCard) return;
+
+  const originalHtml = cartCard.innerHTML;
+  cartCard.innerHTML = `
+    <div class="w-full">
+      <div class="grid gap-3 sm:grid-cols-3 mb-3">
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Nome do Carrinho</label>
+          <input id="edit-cart-name-${id}" value="${ct.cart_name}" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Andar / Local</label>
+          <input id="edit-cart-floor-${id}" value="${ct.floor}" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Tipo de Dispositivo</label>
+          <select id="edit-cart-type-${id}" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white">
+            <option value="Notebook" ${ct.device_type === 'Notebook' ? 'selected' : ''}>Notebook</option>
+            <option value="Tablet" ${ct.device_type === 'Tablet' ? 'selected' : ''}>Tablet</option>
+          </select>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <button onclick="updateCart('${id}')" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar</button>
+        <button onclick="cancelEditCart('${id}')" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
+      </div>
+    </div>
+  `;
+  lucide.createIcons();
+}
+
+
+function cancelEditCart(id) {
+  navigate('carrinhos');
+}
+
+
+async function updateCart(id) {
+  const ct = getCarts().find(c => c.__backendId === id);
+  if (!ct) return;
+
+  const novoNome = document.getElementById(`edit-cart-name-${id}`).value.trim();
+  const novoAndar = document.getElementById(`edit-cart-floor-${id}`).value.trim();
+  const novoTipo = document.getElementById(`edit-cart-type-${id}`).value;
+
+  if (!novoNome || !novoAndar) {
+    toast('Preencha todos os campos.', 'error');
+    return;
+  }
+
+  const cartRecord = allData.find(d => d.__backendId === id);
+  if (!cartRecord) return;
+
+  const r = await window.dataSdk.update({
+    ...cartRecord,
+    cart_name: novoNome,
+    floor: novoAndar,
+    device_type: novoTipo
+  });
+  if (r.isOk) {
+    toast('Carrinho atualizado!');
+    navigate('carrinhos');
+  } else {
+    toast('Erro ao atualizar.', 'error');
+  }
+}
+
+
+function editDevice(id) {
+  const dev = getDevices().find(d => d.__backendId === id);
+  if (!dev) return;
+
+  const deviceRow = document.querySelector(`#device-row-${CSS.escape(id)}`);
+  if (!deviceRow) return;
+
+  const originalHtml = deviceRow.innerHTML;
+  deviceRow.innerHTML = `
+    <div class="col-span-6 grid grid-cols-6 gap-2 items-center text-sm bg-slate-700/50 rounded-lg px-3 py-2">
+      <div>
+        <select id="edit-dev-number-${id}" class="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-xs text-white">
+          ${Array.from({length:40},(_,i)=>i+1).map(n => `<option value="${n}" ${parseInt(dev.device_number) === n ? 'selected' : ''}>#${n}</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <input id="edit-dev-serial-${id}" value="${dev.device_serial || ''}" class="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-xs text-white">
+      </div>
+      <div>
+        <select id="edit-dev-brand-${id}" class="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-xs text-white">
+          <option value="Positivo" ${dev.device_brand === 'Positivo' ? 'selected' : ''}>Positivo</option>
+          <option value="Samsung" ${dev.device_brand === 'Samsung' ? 'selected' : ''}>Samsung</option>
+          <option value="Lenovo" ${dev.device_brand === 'Lenovo' ? 'selected' : ''}>Lenovo</option>
+          <option value="Outro" ${dev.device_brand === 'Outro' ? 'selected' : ''}>Outro</option>
+        </select>
+      </div>
+      <div class="col-span-2">
+        <input id="edit-dev-model-${id}" value="${dev.device_type || ''}" class="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-xs text-white">
+      </div>
+      <div class="text-right flex items-center justify-end gap-1">
+        <button onclick="updateDevice('${id}')" class="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded transition font-medium">Salvar</button>
+        <button onclick="cancelEditDevice('${id}')" class="px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded transition">Cancelar</button>
+      </div>
+    </div>
+  `;
+  lucide.createIcons();
+}
+
+
+function cancelEditDevice(id) {
+  navigate('carrinhos');
+}
+
+
+async function updateDevice(id) {
+  const dev = getDevices().find(d => d.__backendId === id);
+  if (!dev) return;
+
+  const novaPos = document.getElementById(`edit-dev-number-${id}`).value;
+  const novoSerial = document.getElementById(`edit-dev-serial-${id}`).value.trim();
+  const novaMarca = document.getElementById(`edit-dev-brand-${id}`).value;
+  const novoModelo = document.getElementById(`edit-dev-model-${id}`).value.trim();
+
+  if (!novaPos || !novoSerial || !novaMarca) {
+    toast('Preencha os campos obrigatórios.', 'error');
+    return;
+  }
+
+  // Verificar se a nova posição já existe em outro dispositivo do mesmo carrinho
+  const posConflict = getDevices().find(d =>
+    String(d.cart_id) === String(dev.cart_id) &&
+    parseInt(d.device_number) === parseInt(novaPos) &&
+    d.__backendId !== id
+  );
+  if (posConflict) {
+    toast('❌ Esta posição já está ocupada neste carrinho.', 'error');
+    return;
+  }
+
+  const deviceRecord = allData.find(d => d.__backendId === id);
+  if (!deviceRecord) return;
+
+  const r = await window.dataSdk.update({
+    ...deviceRecord,
+    device_number: parseInt(novaPos),
+    device_serial: novoSerial,
+    device_brand: novaMarca,
+    device_type: novoModelo
+  });
+  if (r.isOk) {
+    toast('Dispositivo atualizado!');
+    navigate('carrinhos');
+  } else {
+    toast('Erro ao atualizar.', 'error');
+  }
 }
 
 
