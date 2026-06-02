@@ -44,7 +44,29 @@
                     </div>
                     <div id="login-error" class="text-red-400 text-sm hidden"></div>
                     <button id="login-btn" onclick="handleLogin()" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition">Entrar</button>
-                    <p class="text-center text-slate-500 text-xs mt-2">Primeiro acesso? Cadastre-se pelo administrador</p>
+                    <div class="flex flex-col items-center gap-1 mt-2">
+                      <button onclick="showForgotPassword()" class="text-blue-400 hover:text-blue-300 text-xs underline transition">Esqueci minha senha</button>
+                      <p class="text-slate-500 text-xs">Primeiro acesso? Cadastre-se pelo administrador</p>
+                    </div>
+
+                    <!-- Painel de recuperação de senha (oculto por padrão) -->
+                    <div id="forgot-password-panel" class="hidden mt-4 p-4 bg-slate-800 border border-slate-700 rounded-xl space-y-3">
+                      <p class="text-sm text-slate-300 font-medium">Recuperar senha</p>
+                      <p class="text-xs text-slate-400">Digite seu e-mail para receber um link de redefinição.</p>
+                      <input id="forgot-email" type="email" placeholder="seu@email.com"
+                        class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500">
+                      <div id="forgot-message" class="text-xs hidden"></div>
+                      <div class="flex gap-2">
+                        <button onclick="handleForgotPassword()"
+                          class="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition">
+                          Enviar link
+                        </button>
+                        <button onclick="hideForgotPassword()"
+                          class="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
                 </div>
             </div>
         </div>
