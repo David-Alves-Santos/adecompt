@@ -322,6 +322,53 @@ async function handleLogin() {
     });
 
     if (authError) {
+      // Se as credenciais forem do admin padrão, tentamos criar o admin
+      // automaticamente no Supabase (útil para primeiro deploy)
+      if (email === 'admin@escola.com' && pass === 'admin123') {
+        // Tentar criar o admin automaticamente via signUp
+        const { error: signUpError, data: signUpData } = await supabase.auth.signUp({
+          email: 'admin@escola.com',
+          password: 'admin123',
+          options: { data: { name: 'Administrador', role: 'admin' } }
+        });
+
+        if (!signUpError) {
+          // Verificar se o usuário foi confirmado automaticamente
+          // (signUp retorna identities com length > 0 quando auto-confirmado)
+          const autoConfirmed = signUpData?.user?.identities && signUpData.user.identities.length > 0;
+
+          if (autoConfirmed) {
+            // Profile já foi criado pelo trigger; atualizar role e name
+            await supabase
+              .from('profiles')
+              .update({ name: 'Administrador', role: 'admin', user_status: 'ativo' })
+              .eq('email', 'admin@escola.com');
+
+            // Tentar login novamente
+            const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({
+              email: 'admin@escola.com',
+              password: 'admin123'
+            });
+            if (!retryError && retryData) {
+              currentUser = { name: 'Administrador', email: 'admin@escola.com', role: 'admin', __backendId: retryData.user.id };
+              saveSession();
+              showMainApp();
+              return;
+            }
+          } else {
+            // Usuário criado mas precisa confirmar e-mail
+            errEl.innerHTML = '✅ Admin criado! <strong>Desative a confirmação de e-mail</strong> no Supabase: Authentication > Settings > "Confirm email" = OFF, ou confirme o e-mail manualmente em Authentication > Users.';
+            errEl.className = 'text-xs text-emerald-400';
+            errEl.classList.remove('hidden');
+            return;
+          }
+        }
+
+        // Se chegou aqui, instruir o usuário
+        errEl.textContent = '⚠️ Não foi possível criar o admin automaticamente. Crie o usuário em Authentication > Users (email: admin@escola.com, senha: admin123) e depois execute no SQL Editor: update public.profiles set role = \'admin\' where email = \'admin@escola.com\';';
+        errEl.classList.remove('hidden');
+        return;
+      }
       errEl.textContent = 'E-mail ou senha incorretos';
       errEl.classList.remove('hidden');
       console.error('Supabase auth error:', authError.message);
