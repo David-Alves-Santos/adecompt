@@ -1301,7 +1301,7 @@ function renderCarrinhos(c) {
                 <button onclick="editCart('${ct.__backendId}')" class="p-2 text-amber-400 hover:bg-amber-500/20 rounded-lg transition" title="Editar carrinho">
                   <i data-lucide="pencil" style="width:16px;height:16px"></i>
                 </button>
-                <button onclick="deleteCart('${ct.__backendId}')" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
+                <button onclick="confirmDeleteCart('${ct.__backendId}')" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
                   <i data-lucide="trash-2" style="width:16px;height:16px"></i>
                 </button>
               </div>
@@ -1631,11 +1631,21 @@ async function saveDevice(cartId) {
 }
 
 
+function confirmDeleteCart(id) {
+  const ct = getCarts().find(c => c.__backendId === id);
+  if (!ct) return;
+  const name = prompt(`Digite o nome do carrinho "${ct.cart_name}" para confirmar a exclusão:`);
+  if (name && name.trim() === ct.cart_name) {
+    deleteCart(id);
+  } else if (name !== null) {
+    toast('❌ Nome incorreto. Exclusão cancelada.', 'error');
+  }
+}
+
 async function deleteCart(id) {
   const rec = allData.find(d => d.__backendId === id);
   if (rec) {
     const result = await window.dataSdk.delete(rec);
-    // ERROR-1: checar resultado antes de confirmar sucesso
     if (result.isOk) { toast('Carrinho removido.'); }
     else { toast('❌ Erro ao remover carrinho.', 'error'); }
   }
