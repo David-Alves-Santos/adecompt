@@ -409,6 +409,52 @@ function logout() {
 }
 
 
+// ========== FORGOT PASSWORD ==========
+function showForgotPassword() {
+  document.getElementById('forgot-password-panel').classList.remove('hidden');
+  document.getElementById('forgot-email').value = document.getElementById('login-email').value;
+  document.getElementById('forgot-message').classList.add('hidden');
+  document.getElementById('forgot-email').focus();
+}
+
+function hideForgotPassword() {
+  document.getElementById('forgot-password-panel').classList.add('hidden');
+  document.getElementById('forgot-message').classList.add('hidden');
+}
+
+async function handleForgotPassword() {
+  const email = document.getElementById('forgot-email').value.trim().toLowerCase();
+  const msgEl = document.getElementById('forgot-message');
+  
+  if (!email) {
+    msgEl.textContent = 'Digite um e-mail válido.';
+    msgEl.className = 'text-xs text-red-400';
+    msgEl.classList.remove('hidden');
+    return;
+  }
+
+  if (isSupabaseMode()) {
+    const supabase = getSupabaseClient();
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + window.location.pathname
+    });
+    if (error) {
+      msgEl.textContent = 'Erro ao enviar e-mail. Verifique o endereço e tente novamente.';
+      msgEl.className = 'text-xs text-red-400';
+    } else {
+      msgEl.textContent = '✅ Link enviado! Verifique sua caixa de entrada (e o spam).';
+      msgEl.className = 'text-xs text-emerald-400';
+    }
+  } else {
+    // Legacy mode: sem suporte a reset automático
+    msgEl.textContent = 'Contate o administrador da escola para redefinir sua senha.';
+    msgEl.className = 'text-xs text-amber-400';
+  }
+
+  msgEl.classList.remove('hidden');
+}
+
+
 // ========== NAVIGATION ==========
 function buildNav() {
   const nav = document.getElementById('nav-links');
