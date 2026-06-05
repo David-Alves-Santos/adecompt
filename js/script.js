@@ -1,14 +1,14 @@
 // ========== STATE ==========
-let allData = [];
-let currentUser = null;
-let currentView = 'reservar';
-let isLoading = false;
-let isFormOpen = false;
-// Período selecionado na tela de Monitoramento. `null` = seguir o relógio (modo "ao vivo").
-let selectedMonitorPeriod = null;
-// Verdadeiro quando o usuário voltou do link de recuperação de senha do e-mail.
-// Usado para mostrar a tela de "nova senha" em vez de logar/entrar no app.
-let isRecoveryFlow = false;
+const state = {
+  state.allData: [],
+  state.currentUser: null,
+  state.currentView: 'reservar',
+  state.isLoading: false,
+  state.isFormOpen: false,
+  state.selectedMonitorPeriod: null, // null = seguir o relógio (modo "ao vivo")
+  state.isRecoveryFlow: false,       // true quando o usuário retornou do link de recuperação de senha
+  state.selectedDevices: new Set(),
+};
 
 // ========== SUPABASE AUTH ==========
 /** Check if Supabase mode is active (dataSdk using Supabase vs Express API) */
@@ -18,7 +18,7 @@ function isSupabaseMode() {
 
 /**
  * Attempt to restore an existing Supabase session on page load.
- * Returns true if a valid session was found and currentUser was set.
+ * Returns true if a valid session was found and state.currentUser was set.
  */
 async function tryRestoreSupabaseSession() {
   if (!isSupabaseMode()) return false;
@@ -35,16 +35,16 @@ async function tryRestoreSupabaseSession() {
       .single();
 
     if (profile) {
-      currentUser = {
+      state.currentUser = {
         name: profile.name,
         email: profile.email,
         role: profile.role,
         __backendId: profile.id
       };
-      // Sync profile into allData if not already there
-      const existing = allData.find(d => d.__backendId === profile.id && d.type === 'user');
+      // Sync profile into state.allData if not already there
+      const existing = state.allData.find(d => d.__backendId === profile.id && d.type === 'user');
       if (!existing) {
-        allData.push({
+        state.allData.push({
           ...profile,
           __backendId: profile.id,
           type: 'user',
@@ -91,10 +91,10 @@ const defaultConfig = {
 
 
 // ========== HELPERS ==========
-function getUsers() { return allData.filter(d => d.type === 'user'); }
-function getCarts() { return allData.filter(d => d.type === 'cart'); }
-function getDevices() { return allData.filter(d => d.type === 'device'); }
-function getReservations() { return allData.filter(d => d.type === 'reservation'); }
+function getUsers() { return state.allData.filter(d => d.type === 'user'); }
+function getCarts() { return state.allData.filter(d => d.type === 'cart'); }
+function getDevices() { return state.allData.filter(d => d.type === 'device'); }
+function getReservations() { return state.allData.filter(d => d.type === 'reservation'); }
 
 
 function toast(msg, type='success') {
@@ -114,7 +114,7 @@ function todayStr() { return new Date().toISOString().split('T')[0]; }
 // ========== DATA SDK ==========
 const dataHandler = {
   onDataChanged(data) {
-    allData = data;
+    state.allData = data;
     // Load periods from config if exists
     const configRecord = data.find(d => d.config_key === 'school_periods');
     if (configRecord && configRecord.periods_json) {
@@ -127,13 +127,13 @@ const dataHandler = {
     // Auto-restore session from localStorage after data loads.
     // No fluxo de recuperação de senha não fazemos auto-login: o usuário
     // precisa ver a tela de nova senha primeiro.
-    if (!currentUser && !isRecoveryFlow) {
+    if (!state.currentUser && !state.isRecoveryFlow) {
       if (loadSession()) {
         showMainApp();
         return;
       }
     }
-    if (currentUser && !isFormOpen) renderCurrentView();
+    if (state.currentUser && !state.isFormOpen) renderCurrentView();
     // Check for expiring reservations
     checkExpiringReservations();
   }
@@ -201,8 +201,8 @@ Acesse o app para gerenciar suas reservas!
 
 // ========== SESSÃO PERSISTENTE ==========
 function saveSession() {
-  if (currentUser) {
-    localStorage.setItem('adelaide_session', JSON.stringify(currentUser));
+  if (state.currentUser) {
+    localStorage.setItem('adelaide_session', JSON.stringify(state.currentUser));
   }
 }
 
@@ -212,12 +212,12 @@ function loadSession() {
     if (saved) {
       const user = JSON.parse(saved);
       if (user.email === 'admin@escola.com') {
-        currentUser = user;
+        state.currentUser = user;
         return true;
       }
       const found = getUsers().find(u => u.email === user.email && u.user_status !== 'inativo');
       if (found) {
-        currentUser = { name: found.name, email: found.email, role: found.role, __backendId: found.__backendId };
+        state.currentUser = { name: found.name, email: found.email, role: found.role, __backendId: found.__backendId };
         return true;
       }
     }
@@ -246,7 +246,7 @@ async function initApp() {
   // o detectSessionInUrl criaria uma sessão válida e o usuário entraria direto
   // no app em vez de redefinir a senha.
   if (window.location.hash && window.location.hash.includes('type=recovery')) {
-    isRecoveryFlow = true;
+    state.isRecoveryFlow = true;
   }
 
   const r = await window.dataSdk.init(dataHandler);
@@ -257,7 +257,7 @@ async function initApp() {
     setupPasswordRecoveryListener();
   }
 
-  if (isRecoveryFlow) {
+  if (state.isRecoveryFlow) {
     // Mostrar a tela de nova senha; não restaurar sessão nem entrar no app.
     showResetPasswordForm();
   } else {
@@ -386,7 +386,7 @@ async function handleLogin() {
               password: 'admin123'
             });
             if (!retryError && retryData) {
-              currentUser = { name: 'Administrador', email: 'admin@escola.com', role: 'admin', __backendId: retryData.user.id };
+              state.currentUser = { name: 'Administrador', email: 'admin@escola.com', role: 'admin', __backendId: retryData.user.id };
               saveSession();
               showMainApp();
               return;
@@ -435,7 +435,7 @@ async function handleLogin() {
       return;
     }
 
-    currentUser = { name: profile.name, email: profile.email, role: profile.role, __backendId: profile.id };
+    state.currentUser = { name: profile.name, email: profile.email, role: profile.role, __backendId: profile.id };
     saveSession();
     showMainApp();
     return;
@@ -445,7 +445,7 @@ async function handleLogin() {
 
   // Default admin
   if (email === 'admin@escola.com' && pass === 'admin123') {
-    currentUser = { name:'Administrador', email:'admin@escola.com', role:'admin' };
+    state.currentUser = { name:'Administrador', email:'admin@escola.com', role:'admin' };
     saveSession();
     showMainApp();
     return;
@@ -462,22 +462,22 @@ async function handleLogin() {
     return;
   }
 
-  currentUser = { name: user.name, email: user.email, role: user.role, __backendId: user.__backendId };
+  state.currentUser = { name: user.name, email: user.email, role: user.role, __backendId: user.__backendId };
   saveSession();
   showMainApp();
 }
 
 
 function isAdmin() {
-  return currentUser && currentUser.role === 'admin';
+  return state.currentUser && state.currentUser.role === 'admin';
 }
 
 
 function showMainApp() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('main-app').style.display = 'block';
-  document.getElementById('user-name').textContent = currentUser.name;
-  document.getElementById('user-role').textContent = currentUser.role === 'admin' ? 'Administrador' : 'Professor';
+  document.getElementById('user-name').textContent = state.currentUser.name;
+  document.getElementById('user-role').textContent = state.currentUser.role === 'admin' ? 'Administrador' : 'Professor';
   buildNav();
   renderCurrentView();
   lucide.createIcons();
@@ -485,8 +485,8 @@ function showMainApp() {
 
 
 function logout() {
-  currentUser = null;
-  currentView = 'reservar';
+  state.currentUser = null;
+  state.currentView = 'reservar';
   clearSession();
   document.getElementById('main-app').style.display = 'none';
   document.getElementById('login-screen').style.display = 'flex';
@@ -520,7 +520,7 @@ function setupPasswordRecoveryListener() {
   if (!supabase) return;
   supabase.auth.onAuthStateChange((event) => {
     if (event === 'PASSWORD_RECOVERY') {
-      isRecoveryFlow = true;
+      state.isRecoveryFlow = true;
       showResetPasswordForm();
     }
   });
@@ -583,7 +583,7 @@ async function submitNewPassword() {
     show('✅ Senha alterada! Redirecionando para o login...', 'text-emerald-400');
     // Encerra a sessão de recuperação e volta para o login limpo (sem o hash).
     await supabase.auth.signOut();
-    isRecoveryFlow = false;
+    state.isRecoveryFlow = false;
     setTimeout(() => {
       window.location.replace(window.location.origin + window.location.pathname);
     }, 1500);
@@ -631,7 +631,7 @@ async function handleForgotPassword() {
 // ========== NAVIGATION ==========
 function buildNav() {
   const nav = document.getElementById('nav-links');
-  const isAdmin = currentUser.role === 'admin';
+  const isAdmin = state.currentUser.role === 'admin';
   let links = [
     { id:'reservar', icon:'calendar-plus', label:'Reservar' },
     { id:'minhas', icon:'bookmark', label:'Minhas Reservas' }
@@ -647,7 +647,7 @@ function buildNav() {
     );
   }
   nav.innerHTML = links.map(l => `
-    <button data-action="navigate" data-view="${l.id}" class="sidebar-link w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-300 ${currentView===l.id?'active':''}" data-nav="${l.id}">
+    <button data-action="navigate" data-view="${l.id}" class="sidebar-link w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-300 ${state.currentView===l.id?'active':''}" data-nav="${l.id}">
       <i data-lucide="${l.icon}" style="width:16px;height:16px"></i> ${l.label}
     </button>
   `).join('');
@@ -658,8 +658,8 @@ function buildNav() {
 function navigate(view) {
   // Ao trocar de aba, sempre voltamos o Monitoramento ao modo "ao vivo".
   // Assim o usuário não fica preso a um período antigo se sair e voltar à tela.
-  selectedMonitorPeriod = null;
-  currentView = view;
+  state.selectedMonitorPeriod = null;
+  state.currentView = view;
   buildNav();
   renderCurrentView();
 }
@@ -667,7 +667,7 @@ function navigate(view) {
 
 function renderCurrentView() {
   const c = document.getElementById('main-content');
-  switch(currentView) {
+  switch(state.currentView) {
     case 'reservar': renderReservar(c); break;
     case 'minhas': renderMinhas(c); break;
     case 'horarios': renderHorarios(c); break;
@@ -746,9 +746,6 @@ function renderReservar(c) {
 }
 
 
-let selectedDevices = new Set();
-
-
 function updateDeviceGrid() {
   const cartId = document.getElementById('sel-cart')?.value;
   const date = document.getElementById('sel-date')?.value;
@@ -762,7 +759,7 @@ function updateDeviceGrid() {
     return;
   }
   section.classList.remove('hidden');
-  selectedDevices.clear();
+  state.selectedDevices.clear();
 
 
   const cart = getCarts().find(ct => ct.__backendId === cartId);
@@ -830,8 +827,8 @@ function toggleDevice(el, num, status) {
   const currentStatus = el.getAttribute('data-status');
   if (currentStatus !== 'available') return;
 
-  if (selectedDevices.has(num)) {
-    selectedDevices.delete(num);
+  if (state.selectedDevices.has(num)) {
+    state.selectedDevices.delete(num);
     el.className = 'device-card rounded-xl p-2 text-center border-2 bg-blue-500/20 border-blue-500/50 hover:border-blue-400 cursor-pointer';
     // lucide substitui <i> por <svg>, então buscamos os dois
     const icon = el.querySelector('i, svg');
@@ -842,7 +839,7 @@ function toggleDevice(el, num, status) {
       textEl.classList.add('text-blue-400');
     }
   } else {
-    selectedDevices.add(num);
+    state.selectedDevices.add(num);
     el.className = 'device-card rounded-xl p-2 text-center border-2 bg-emerald-500/20 border-emerald-500 cursor-pointer';
     const icon = el.querySelector('i, svg');
     if (icon) icon.style.color = '#10b981';
@@ -859,7 +856,7 @@ function toggleDevice(el, num, status) {
 function updateConfirmBtn() {
   const btn = document.getElementById('confirm-reservation-btn');
   if (btn) {
-    const shouldEnable = selectedDevices.size > 0;
+    const shouldEnable = state.selectedDevices.size > 0;
     // Nunca usar btn.disabled — bloqueia o onclick mesmo com pointerEvents 'auto'
     if (shouldEnable) {
       btn.style.opacity = '1';
@@ -881,10 +878,10 @@ function updateConfirmBtn() {
 
 
 function showConfirmationModal(cartId, date, periods, cart) {
-  if (!cart || periods.length === 0 || selectedDevices.size === 0) return;
+  if (!cart || periods.length === 0 || state.selectedDevices.size === 0) return;
 
 
-  const totalReservations = periods.length * selectedDevices.size;
+  const totalReservations = periods.length * state.selectedDevices.size;
   const dateObj = new Date(date + 'T12:00:00');
   const formattedDate = dateObj.toLocaleDateString('pt-BR');
 
@@ -912,7 +909,7 @@ function showConfirmationModal(cartId, date, periods, cart) {
         </div>
         <div class="flex justify-between text-sm">
           <span class="text-slate-400">Dispositivos:</span>
-          <span class="text-blue-400 font-medium">${[...selectedDevices].sort((a,b)=>a-b).map(d=>'#'+d).join(', ')}</span>
+          <span class="text-blue-400 font-medium">${[...state.selectedDevices].sort((a,b)=>a-b).map(d=>'#'+d).join(', ')}</span>
         </div>
         <div class="flex justify-between text-sm">
           <span class="text-slate-400">Horários:</span>
@@ -950,33 +947,33 @@ function showConfirmationModal(cartId, date, periods, cart) {
   cancelBtn.onclick = (e) => {
     e.stopPropagation();
     modal.remove();
-    isLoading = false; // liberar o botão ao cancelar (RACE-1)
+    state.isLoading = false; // liberar o botão ao cancelar (RACE-1)
   };
 
   confirmBtn.onclick = (e) => {
     e.stopPropagation();
     modal.remove();
-    // isLoading já está true; proceedWithReservation vai gerenciá-lo daqui
+    // state.isLoading já está true; proceedWithReservation vai gerenciá-lo daqui
     proceedWithReservation(cartId, date, periods, cart);
   };
 
   modal.onclick = (e) => {
     if (e.target === modal) {
       modal.remove();
-      isLoading = false; // liberar ao fechar clicando fora (RACE-1)
+      state.isLoading = false; // liberar ao fechar clicando fora (RACE-1)
     }
   };
 }
 
 
 async function proceedWithReservation(cartId, date, periods, cart) {
-  // isLoading já foi setado como true em confirmReservation() antes de abrir o modal.
+  // state.isLoading já foi setado como true em confirmReservation() antes de abrir o modal.
   // Esta guarda cobre chamadas diretas eventuais.
-  if (!isLoading) isLoading = true;
+  if (!state.isLoading) state.isLoading = true;
 
 
-  if (!cart || periods.length === 0 || selectedDevices.size === 0) {
-    isLoading = false;
+  if (!cart || periods.length === 0 || state.selectedDevices.size === 0) {
+    state.isLoading = false;
     toast('Dados inválidos para criar reserva.', 'error');
     return;
   }
@@ -993,7 +990,7 @@ async function proceedWithReservation(cartId, date, periods, cart) {
   // Build the full list of reservation records
   const reservations = [];
   for (const period of periods) {
-    for (const devNum of selectedDevices) {
+    for (const devNum of state.selectedDevices) {
       reservations.push({
         type: 'reservation',
         cart_name: cart.cart_name || '',
@@ -1003,8 +1000,8 @@ async function proceedWithReservation(cartId, date, periods, cart) {
         device_number: String(devNum),
         device_brand: '',
         device_serial: '',
-        reserved_by: currentUser.name || '',
-        reserved_email: currentUser.email || '',
+        reserved_by: state.currentUser.name || '',
+        reserved_email: state.currentUser.email || '',
         date: date || '',
         period: period || '',
         status: 'active',
@@ -1035,7 +1032,7 @@ async function proceedWithReservation(cartId, date, periods, cart) {
   // Re-enable re-renders with a single update
   window.dataSdk.endBatch();
 
-  isLoading = false;
+  state.isLoading = false;
   
   if (btn) {
     btn.style.pointerEvents = 'auto';
@@ -1049,7 +1046,7 @@ async function proceedWithReservation(cartId, date, periods, cart) {
     } else {
       toast(`⚠️ ${successCount} reserva(s) criada(s), mas ${errorCount} falharam. Verifique conflitos.`, 'warning');
     }
-    selectedDevices.clear();
+    state.selectedDevices.clear();
 
     // Reset form
     const cartIdEl = document.getElementById('sel-cart');
@@ -1070,7 +1067,7 @@ async function proceedWithReservation(cartId, date, periods, cart) {
 
 
 function confirmReservation() {
-  if (isLoading) return;
+  if (state.isLoading) return;
   
   const cartIdEl = document.getElementById('sel-cart');
   const dateEl = document.getElementById('sel-date');
@@ -1092,19 +1089,19 @@ function confirmReservation() {
   if (!cart) { toast('Carrinho não encontrado.', 'error'); return; }
   if (!date) { toast('Selecione uma data.', 'error'); return; }
   if (periods.length === 0) { toast('Selecione pelo menos um horário.', 'error'); return; }
-  if (selectedDevices.size === 0) { toast('Selecione pelo menos um dispositivo.', 'error'); return; }
+  if (state.selectedDevices.size === 0) { toast('Selecione pelo menos um dispositivo.', 'error'); return; }
 
 
   // Check limit
-  const totalNew = periods.length * selectedDevices.size;
-  if (allData.length + totalNew > 999) {
+  const totalNew = periods.length * state.selectedDevices.size;
+  if (state.allData.length + totalNew > 999) {
     toast('Limite de registros atingido. Exclua reservas antigas.', 'error');
     return;
   }
 
 
   // Bloquear novos cliques enquanto o modal está aberto (RACE-1)
-  isLoading = true;
+  state.isLoading = true;
 
   // Show confirmation modal
   showConfirmationModal(cartId, date, periods, cart);
@@ -1113,7 +1110,7 @@ function confirmReservation() {
 
 // ========== MINHAS RESERVAS ==========
 function renderMinhas(c) {
-  const mine = getReservations().filter(r => r.reserved_email === currentUser.email && r.status === 'active');
+  const mine = getReservations().filter(r => r.reserved_email === state.currentUser.email && r.status === 'active');
   const grouped = {};
   mine.forEach(r => {
     const key = `${r.date}|${r.cart_name}`;
@@ -1153,20 +1150,20 @@ function renderMinhas(c) {
 
 
 async function cancelGroup(ids) {
-  if (isLoading) return;
-  isLoading = true;
+  if (state.isLoading) return;
+  state.isLoading = true;
   const arr = ids.split(',');
   window.dataSdk.beginBatch();
   let hasError = false;
   for (const id of arr) {
-    const rec = allData.find(d => d.__backendId === id);
+    const rec = state.allData.find(d => d.__backendId === id);
     if (rec) {
       const result = await window.dataSdk.delete(rec);
       if (!result.isOk) hasError = true;
     }
   }
   window.dataSdk.endBatch();
-  isLoading = false;
+  state.isLoading = false;
   if (hasError) {
     toast('⚠️ Erro ao cancelar uma ou mais reservas.', 'error');
   } else {
@@ -1176,10 +1173,10 @@ async function cancelGroup(ids) {
 
 
 function showFinalizeModal(ids) {
-  if (isLoading) return;
+  if (state.isLoading) return;
   
   const arr = ids.split(',');
-  const records = arr.map(id => allData.find(d => d.__backendId === id)).filter(r => r);
+  const records = arr.map(id => state.allData.find(d => d.__backendId === id)).filter(r => r);
   
   if (records.length === 0) {
     toast('Nenhuma reserva encontrada.', 'error');
@@ -1240,17 +1237,17 @@ function showFinalizeModal(ids) {
     e.stopPropagation();
     modal.remove();
     
-    isLoading = true;
+    state.isLoading = true;
     window.dataSdk.beginBatch();
     for (const id of arr) {
-      const rec = allData.find(d => d.__backendId === id);
+      const rec = state.allData.find(d => d.__backendId === id);
       if (rec) {
         const updated = { ...rec, status: 'completed' };
         await window.dataSdk.update(updated);
       }
     }
     window.dataSdk.endBatch();
-    isLoading = false;
+    state.isLoading = false;
     toast('✅ Reserva finalizada com sucesso!');
     navigate('minhas');
   };
@@ -1265,7 +1262,7 @@ function showFinalizeModal(ids) {
 
 // ========== ADMIN: HORÁRIOS ==========
 function renderHorarios(c) {
-  const configRecord = allData.find(d => d.config_key === 'school_periods');
+  const configRecord = state.allData.find(d => d.config_key === 'school_periods');
   const currentPeriods = configRecord && configRecord.periods_json ? JSON.parse(configRecord.periods_json) : PERIODS;
   
   c.innerHTML = `
@@ -1350,15 +1347,15 @@ function removePeriod(idx) {
 
 async function saveHorarios() {
   // BUG-5: sem este guard, duplo clique dispara dois creates simultâneos antes do
-  // allData ser atualizado, gerando registros duplicados de school_periods.
-  if (isLoading) return;
-  isLoading = true;
+  // state.allData ser atualizado, gerando registros duplicados de school_periods.
+  if (state.isLoading) return;
+  state.isLoading = true;
 
   const inputs = document.querySelectorAll('.period-input');
   const newPeriods = Array.from(inputs).map(i => i.value.trim()).filter(v => v);
 
   if (newPeriods.length === 0) {
-    isLoading = false;
+    state.isLoading = false;
     toast('Adicione pelo menos um horário.', 'error');
     return;
   }
@@ -1368,19 +1365,19 @@ async function saveHorarios() {
   const periodFormat = /\(\d{2}:\d{2}-\d{2}:\d{2}\)/;
   const invalids = newPeriods.filter(p => !periodFormat.test(p));
   if (invalids.length > 0) {
-    isLoading = false;
+    state.isLoading = false;
     toast(`❌ Formato inválido: "${invalids[0]}". Use: Nome (HH:MM-HH:MM)`, 'error');
     return;
   }
 
-  const existingConfig = allData.find(d => d.config_key === 'school_periods');
+  const existingConfig = state.allData.find(d => d.config_key === 'school_periods');
 
   if (existingConfig) {
     const result = await window.dataSdk.update({
       ...existingConfig,
       periods_json: JSON.stringify(newPeriods)
     });
-    isLoading = false;
+    state.isLoading = false;
     if (result.isOk) {
       PERIODS = newPeriods;
       toast('Horários atualizados com sucesso!');
@@ -1388,8 +1385,8 @@ async function saveHorarios() {
       toast('Erro ao salvar horários.', 'error');
     }
   } else {
-    if (allData.length >= 999) {
-      isLoading = false;
+    if (state.allData.length >= 999) {
+      state.isLoading = false;
       toast('Limite de registros atingido.', 'error');
       return;
     }
@@ -1402,7 +1399,7 @@ async function saveHorarios() {
       cart_id: '', reserved_by: '', reserved_email: '', date: '',
       period: '', status: '', created_at: new Date().toISOString()
     });
-    isLoading = false;
+    state.isLoading = false;
     if (result.isOk) {
       PERIODS = newPeriods;
       toast('Horários salvos com sucesso!');
@@ -1430,7 +1427,7 @@ async function resetHorarios() {
   ];
 
 
-  const existingConfig = allData.find(d => d.config_key === 'school_periods');
+  const existingConfig = state.allData.find(d => d.config_key === 'school_periods');
   
   if (existingConfig) {
     await window.dataSdk.delete(existingConfig);
@@ -1574,7 +1571,7 @@ async function updateCart(id) {
     return;
   }
 
-  const cartRecord = allData.find(d => d.__backendId === id);
+  const cartRecord = state.allData.find(d => d.__backendId === id);
   if (!cartRecord) return;
 
   const r = await window.dataSdk.update({
@@ -1661,7 +1658,7 @@ async function updateDevice(id) {
     return;
   }
 
-  const deviceRecord = allData.find(d => d.__backendId === id);
+  const deviceRecord = state.allData.find(d => d.__backendId === id);
   if (!deviceRecord) return;
 
   const r = await window.dataSdk.update({
@@ -1681,7 +1678,7 @@ async function updateDevice(id) {
 
 
 function showCartForm() {
-  isFormOpen = true;
+  state.isFormOpen = true;
   const area = document.getElementById('cart-form-area');
   area.innerHTML = `
     <div class="bg-slate-800 border border-slate-700 rounded-2xl p-5 mb-6 fade-in">
@@ -1758,7 +1755,7 @@ async function saveCart() {
   const floor = document.getElementById('new-cart-floor').value.trim();
   const dtype = document.getElementById('new-cart-type').value;
   if (!name || !floor) { toast('Preencha todos os campos.','error'); return; }
-  if (allData.length >= 999) { toast('Limite de registros atingido.','error'); return; }
+  if (state.allData.length >= 999) { toast('Limite de registros atingido.','error'); return; }
 
 
   const r = await window.dataSdk.create({
@@ -1766,7 +1763,7 @@ async function saveCart() {
     name:'', email:'', password:'', role:'', device_number:0, device_brand:'', device_serial:'', cart_id:'',
     reserved_by:'', reserved_email:'', date:'', period:'', status:'', created_at:new Date().toISOString()
   });
-  if (r.isOk) { toast('Carrinho cadastrado!'); isFormOpen = false; document.getElementById('cart-form-area').innerHTML=''; }
+  if (r.isOk) { toast('Carrinho cadastrado!'); state.isFormOpen = false; document.getElementById('cart-form-area').innerHTML=''; }
   else toast('Erro ao salvar.','error');
 }
 
@@ -1784,7 +1781,7 @@ async function saveDevice(cartId) {
   if (isNaN(parsedNum) || parsedNum < 1 || parsedNum > 40) {
     toast('❌ Número do dispositivo deve ser entre 1 e 40.', 'error'); return;
   }
-  if (allData.length >= 999) { toast('Limite de registros atingido.','error'); return; }
+  if (state.allData.length >= 999) { toast('Limite de registros atingido.','error'); return; }
 
 
   // Check if device number already exists in this cart
@@ -1857,7 +1854,7 @@ function confirmDeleteCart(id) {
 }
 
 async function deleteCart(id) {
-  const rec = allData.find(d => d.__backendId === id);
+  const rec = state.allData.find(d => d.__backendId === id);
   if (rec) {
     const result = await window.dataSdk.delete(rec);
     if (result.isOk) { toast('Carrinho removido.'); }
@@ -1905,7 +1902,7 @@ function confirmDeleteDevice(id) {
 
 
 async function deleteDevice(id) {
-  const rec = allData.find(d => d.__backendId === id);
+  const rec = state.allData.find(d => d.__backendId === id);
   if (rec) {
     const result = await window.dataSdk.delete(rec);
     // ERROR-1: checar resultado antes de confirmar sucesso
@@ -2032,7 +2029,7 @@ async function saveUser() {
   const role = document.getElementById('new-user-role').value;
   if (!name||!email||!pass) { toast('Preencha todos os campos.','error'); return; }
   if (getUsers().find(u=>u.email===email)) { toast('E-mail já cadastrado.','error'); return; }
-  if (allData.length >= 999) { toast('Limite de registros atingido.','error'); return; }
+  if (state.allData.length >= 999) { toast('Limite de registros atingido.','error'); return; }
 
 
   // --- SUPABASE AUTH MODE ---
@@ -2116,7 +2113,7 @@ async function saveUser() {
 
 
 async function deleteUser(id) {
-  const rec = allData.find(d => d.__backendId === id);
+  const rec = state.allData.find(d => d.__backendId === id);
   if (rec) {
     const result = await window.dataSdk.delete(rec);
     // ERROR-1: checar resultado antes de confirmar sucesso
@@ -2133,7 +2130,7 @@ async function toggleUserStatus(id, isCurrentlyActive) {
   const newStatus = isCurrentlyActive ? 'inativo' : 'ativo';
 
   // Atualiza SEMPRE via dataSdk.update (Supabase e legacy). Assim o SDK detecta
-  // falha real de RLS via .select() e atualiza o cache local allData, fazendo a
+  // falha real de RLS via .select() e atualiza o cache local state.allData, fazendo a
   // lista de usuários refletir o novo status na hora.
   const updatedUser = { ...user, user_status: newStatus };
   const r = await window.dataSdk.update(updatedUser);
@@ -2231,7 +2228,7 @@ async function updateUser(id) {
 
   // Atualiza SEMPRE via dataSdk.update (Supabase e legacy). O SDK usa
   // .select().single(), então uma falha de RLS (0 linhas afetadas) vira erro
-  // real em vez de "sucesso" silencioso, e o cache local allData é atualizado
+  // real em vez de "sucesso" silencioso, e o cache local state.allData é atualizado
   // na hora — fazendo a UI refletir a mudança imediatamente.
   const updatedUser = {
     ...user,
@@ -2291,8 +2288,8 @@ function renderMonitor(c) {
   // Período exibido — segue o relógio se o usuário não escolheu outro.
   // Se o período selecionado não existir mais (ex: admin removeu horários),
   // fazemos fallback gracioso para o período atual.
-  const validSelected = selectedMonitorPeriod && PERIODS.includes(selectedMonitorPeriod)
-    ? selectedMonitorPeriod : null;
+  const validSelected = state.selectedMonitorPeriod && PERIODS.includes(state.selectedMonitorPeriod)
+    ? state.selectedMonitorPeriod : null;
   const displayPeriod = validSelected || currentPeriod;
   const isLive = !!currentPeriod && displayPeriod === currentPeriod;
 
@@ -2444,13 +2441,13 @@ function renderMonitor(c) {
 function setMonitorPeriodByIndex(i) {
   const p = PERIODS[i];
   if (!p) return;
-  selectedMonitorPeriod = p;
+  state.selectedMonitorPeriod = p;
   renderCurrentView();
 }
 
 // Voltar ao modo "tempo real": volta a seguir o relógio.
 function monitorGoLive() {
-  selectedMonitorPeriod = null;
+  state.selectedMonitorPeriod = null;
   renderCurrentView();
 }
 
@@ -2600,20 +2597,20 @@ function renderGerenciar(c) {
 }
 
 async function adminCancelReservation(ids) {
-  if (isLoading) return;
-  isLoading = true;
+  if (state.isLoading) return;
+  state.isLoading = true;
   const arr = ids.split(',');
   window.dataSdk.beginBatch();
   let hasError = false;
   for (const id of arr) {
-    const rec = allData.find(d => d.__backendId === id);
+    const rec = state.allData.find(d => d.__backendId === id);
     if (rec) {
       const result = await window.dataSdk.delete(rec);
       if (!result.isOk) hasError = true;
     }
   }
   window.dataSdk.endBatch();
-  isLoading = false;
+  state.isLoading = false;
   if (hasError) toast('⚠️ Erro ao cancelar uma ou mais reservas.', 'warning');
   else toast('Reserva cancelada pelo administrador.');
 }
@@ -2793,7 +2790,7 @@ document.addEventListener('click', (e) => {
     'update-device':            () => updateDevice(id),
     'cancel-edit-device':       () => cancelEditDevice(id),
     'save-cart':                () => saveCart(),
-    'cancel-cart-form':         () => { isFormOpen = false; document.getElementById('cart-form-area').innerHTML = ''; },
+    'cancel-cart-form':         () => { state.isFormOpen = false; document.getElementById('cart-form-area').innerHTML = ''; },
     'save-device':              () => saveDevice(id),
     'cancel-add-device':        () => { document.getElementById(`add-device-form-${id}`).innerHTML = ''; },
     'show-user-form':           () => showUserForm(),
