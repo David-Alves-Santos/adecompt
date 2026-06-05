@@ -7,13 +7,18 @@ import {
   showResetPasswordForm
 } from './auth.js';
 import { checkExpiringReservations } from './helpers.js';
-import { renderReservar, renderMinhas } from './reservas.js';
+import { renderReservar, renderMinhas, updateDeviceGrid } from './reservas.js';
 import { renderHorarios } from './horarios.js';
 import { renderCarrinhos } from './carrinhos.js';
 import { renderUsuarios } from './usuarios.js';
 import { renderMonitor } from './monitor.js';
 import { renderGerenciar } from './gerenciar.js';
-import { renderRelatorio } from './relatorio.js';
+import { renderRelatorio, changeRelatorioMonth } from './relatorio.js';
+
+// Funções chamadas por atributos onchange em HTML gerado dinamicamente
+// precisam estar no escopo global pois ES modules não expõem ao window.
+window.updateDeviceGrid = updateDeviceGrid;
+window.changeRelatorioMonth = changeRelatorioMonth;
 import './events.js'; // side effect: attaches delegation handler
 
 // Register all views
