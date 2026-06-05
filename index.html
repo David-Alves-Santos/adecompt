@@ -37,15 +37,15 @@
                         <label class="block text-sm font-medium text-slate-300 mb-1">Senha</label>
                         <div class="relative">
                             <input id="login-pass" type="password" placeholder="••••••••" class="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500">
-                            <button type="button" onclick="togglePasswordVisibility()" class="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-slate-200 transition" style="background:none;border:none;cursor:pointer;padding:0">
+                            <button type="button" data-action="toggle-password-visibility" class="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-slate-200 transition" style="background:none;border:none;cursor:pointer;padding:0">
                                 <i id="pass-eye-icon" data-lucide="eye" style="width:18px;height:18px"></i>
                             </button>
                         </div>
                     </div>
                     <div id="login-error" class="text-red-400 text-sm hidden"></div>
-                    <button id="login-btn" onclick="handleLogin()" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition">Entrar</button>
+                    <button id="login-btn" data-action="handle-login" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition">Entrar</button>
                     <div class="flex flex-col items-center gap-1 mt-2">
-                      <button onclick="showForgotPassword()" class="text-blue-400 hover:text-blue-300 text-xs underline transition">Esqueci minha senha</button>
+                      <button data-action="show-forgot-password" class="text-blue-400 hover:text-blue-300 text-xs underline transition">Esqueci minha senha</button>
                       <p class="text-slate-500 text-xs">Primeiro acesso? Cadastre-se pelo administrador</p>
                     </div>
 
@@ -57,11 +57,11 @@
                         class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500">
                       <div id="forgot-message" class="text-xs hidden"></div>
                       <div class="flex gap-2">
-                        <button onclick="handleForgotPassword()"
+                        <button data-action="handle-forgot-password"
                           class="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition">
                           Enviar link
                         </button>
-                        <button onclick="hideForgotPassword()"
+                        <button data-action="hide-forgot-password"
                           class="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">
                           Cancelar
                         </button>
@@ -94,7 +94,7 @@
                                 <p id="user-role" class="text-xs text-slate-500"></p>
                             </div>
                         </div>
-                        <button onclick="logout()" class="w-full py-2 text-xs text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition flex items-center justify-center gap-1">
+                        <button data-action="logout" class="w-full py-2 text-xs text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition flex items-center justify-center gap-1">
                             <i data-lucide="log-out" style="width:12px;height:12px"></i> Sair
                         </button>
                     </div>
@@ -104,11 +104,11 @@
             </div>
         </div>
         <!-- MOBILE MENU BUTTON -->
-        <button id="mobile-menu-btn" onclick="toggleSidebar()" class="fixed top-3 left-3 z-50 p-2 bg-slate-800 rounded-lg hidden">
+        <button id="mobile-menu-btn" data-action="toggle-sidebar" class="fixed top-3 left-3 z-50 p-2 bg-slate-800 rounded-lg hidden">
             <i data-lucide="menu" style="width:20px;height:20px;color:white"></i>
         </button>
     </div>
     <div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
-    <script src="js/script.js"></script>
+    <script type="module" src="js/main.js"></script>
 </body>
 </html>

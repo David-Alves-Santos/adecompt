@@ -1,13 +1,28 @@
 // ========== STATE ==========
 const state = {
-  state.allData: [],
-  state.currentUser: null,
-  state.currentView: 'reservar',
-  state.isLoading: false,
-  state.isFormOpen: false,
-  state.selectedMonitorPeriod: null, // null = seguir o relógio (modo "ao vivo")
-  state.isRecoveryFlow: false,       // true quando o usuário retornou do link de recuperação de senha
-  state.selectedDevices: new Set(),
+  allData: [],
+  currentUser: null,
+  currentView: 'reservar',
+  isLoading: false,
+  isFormOpen: false,
+  selectedMonitorPeriod: null, // null = seguir o relógio (modo "ao vivo")
+  isRecoveryFlow: false,       // true quando o usuário retornou do link de recuperação de senha
+  selectedDevices: new Set(),
+  selectedRelatorioMonth: null,
+  PERIODS: [
+    '1º Horário (07:00-07:50)',
+    '2º Horário (07:50-08:40)',
+    '3º Horário (08:40-09:30)',
+    'Intervalo (09:30-09:50)',
+    '4º Horário (09:50-10:40)',
+    '5º Horário (10:40-11:30)',
+    '6º Horário (13:00-13:50)',
+    '7º Horário (13:50-14:40)',
+    '8º Horário (14:40-15:30)',
+    'Intervalo (15:30-15:50)',
+    '9º Horário (15:50-16:40)',
+    '10º Horário (16:40-17:30)'
+  ],
 };
 
 // ========== SUPABASE AUTH ==========
@@ -63,20 +78,6 @@ async function tryRestoreSupabaseSession() {
 }
 
 
-let PERIODS = [
-  '1º Horário (07:00-07:50)',
-  '2º Horário (07:50-08:40)',
-  '3º Horário (08:40-09:30)',
-  'Intervalo (09:30-09:50)',
-  '4º Horário (09:50-10:40)',
-  '5º Horário (10:40-11:30)',
-  '6º Horário (13:00-13:50)',
-  '7º Horário (13:50-14:40)',
-  '8º Horário (14:40-15:30)',
-  'Intervalo (15:30-15:50)',
-  '9º Horário (15:50-16:40)',
-  '10º Horário (16:40-17:30)'
-];
 
 
 const defaultConfig = {
@@ -119,7 +120,7 @@ const dataHandler = {
     const configRecord = data.find(d => d.config_key === 'school_periods');
     if (configRecord && configRecord.periods_json) {
       try {
-        PERIODS = JSON.parse(configRecord.periods_json);
+        state.state.PERIODS = JSON.parse(configRecord.periods_json);
       } catch (e) {
         console.error('Error parsing periods:', e);
       }
@@ -718,7 +719,7 @@ function renderReservar(c) {
       <div>
         <label class="block text-sm font-medium text-slate-300 mb-2">Horários</label>
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 mb-6" id="period-checks">
-          ${PERIODS.map((p,i) => `
+          ${state.PERIODS.map((p,i) => `
             <label class="flex items-center gap-2 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg cursor-pointer hover:border-blue-500 transition text-xs">
               <input type="checkbox" value="${p}" class="period-cb accent-blue-500" onchange="updateDeviceGrid()"> <span>${p}</span>
             </label>
@@ -1263,7 +1264,7 @@ function showFinalizeModal(ids) {
 // ========== ADMIN: HORÁRIOS ==========
 function renderHorarios(c) {
   const configRecord = state.allData.find(d => d.config_key === 'school_periods');
-  const currentPeriods = configRecord && configRecord.periods_json ? JSON.parse(configRecord.periods_json) : PERIODS;
+  const currentPeriods = configRecord && configRecord.periods_json ? JSON.parse(configRecord.periods_json) : state.PERIODS;
   
   c.innerHTML = `
     <div class="fade-in max-w-4xl mx-auto">
@@ -1379,7 +1380,7 @@ async function saveHorarios() {
     });
     state.isLoading = false;
     if (result.isOk) {
-      PERIODS = newPeriods;
+      state.PERIODS = newPeriods;
       toast('Horários atualizados com sucesso!');
     } else {
       toast('Erro ao salvar horários.', 'error');
@@ -1401,7 +1402,7 @@ async function saveHorarios() {
     });
     state.isLoading = false;
     if (result.isOk) {
-      PERIODS = newPeriods;
+      state.PERIODS = newPeriods;
       toast('Horários salvos com sucesso!');
     } else {
       toast('Erro ao salvar horários.', 'error');
@@ -1433,7 +1434,7 @@ async function resetHorarios() {
     await window.dataSdk.delete(existingConfig);
   }
   
-  PERIODS = defaultPeriods;
+  state.PERIODS = defaultPeriods;
   toast('Horários resetados para o padrão.');
   navigate('horarios');
 }
@@ -2267,14 +2268,14 @@ function renderMonitor(c) {
   const todayRes = getReservations().filter(r => r.date === today && r.status === 'active');
 
 
-  // Figure out current period — derived dynamically from PERIODS strings
+  // Figure out current period — derived dynamically from state.PERIODS strings
   // so it stays correct when the school customizes its schedule via the
   // "Horários" admin panel. Each period label is expected to contain a
   // (HH:MM-HH:MM) range; periods without that pattern are skipped.
   const now = new Date();
   const mins = now.getHours() * 60 + now.getMinutes();
   let currentPeriod = '';
-  for (const period of PERIODS) {
+  for (const period of state.PERIODS) {
     const m = period.match(/\((\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\)/);
     if (!m) continue;
     const startMins = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
@@ -2288,7 +2289,7 @@ function renderMonitor(c) {
   // Período exibido — segue o relógio se o usuário não escolheu outro.
   // Se o período selecionado não existir mais (ex: admin removeu horários),
   // fazemos fallback gracioso para o período atual.
-  const validSelected = state.selectedMonitorPeriod && PERIODS.includes(state.selectedMonitorPeriod)
+  const validSelected = state.selectedMonitorPeriod && state.PERIODS.includes(state.selectedMonitorPeriod)
     ? state.selectedMonitorPeriod : null;
   const displayPeriod = validSelected || currentPeriod;
   const isLive = !!currentPeriod && displayPeriod === currentPeriod;
@@ -2309,7 +2310,7 @@ function renderMonitor(c) {
   todayRes.forEach(r => { resByPeriod[r.period] = (resByPeriod[r.period] || 0) + 1; });
 
   // Timeline horizontal — uma "chip" por período no dia.
-  const timelineHtml = PERIODS.map((p, i) => {
+  const timelineHtml = state.PERIODS.map((p, i) => {
     const isCurrent = p === currentPeriod;
     const isSelected = p === displayPeriod;
     const isInterval = p.startsWith('Intervalo');
@@ -2436,10 +2437,10 @@ function renderMonitor(c) {
 }
 
 
-// Trocar o período exibido no Monitoramento. Usamos índice em PERIODS p/
+// Trocar o período exibido no Monitoramento. Usamos índice em state.PERIODS p/
 // evitar problemas de escape no `onclick` (os rótulos contêm parênteses).
 function setMonitorPeriodByIndex(i) {
-  const p = PERIODS[i];
+  const p = state.PERIODS[i];
   if (!p) return;
   state.selectedMonitorPeriod = p;
   renderCurrentView();
@@ -2466,7 +2467,7 @@ function showDeviceSchedule(cartName, deviceNum) {
   const resByPeriod = {};
   allRes.forEach(r => { resByPeriod[r.period] = r; });
 
-  const periodsHtml = PERIODS.map(p => {
+  const periodsHtml = state.PERIODS.map(p => {
     if (p.startsWith('Intervalo')) {
       return `<div class="text-[10px] text-slate-600 uppercase tracking-wider py-1 px-2">${p}</div>`;
     }
@@ -2616,10 +2617,8 @@ async function adminCancelReservation(ids) {
 }
 
 // ========== ADMIN: RELATÓRIOS ==========
-window.selectedRelatorioMonth = null;
-
 function changeRelatorioMonth(month) {
-  window.selectedRelatorioMonth = month;
+  state.selectedRelatorioMonth = month;
   renderCurrentView();
 }
 
@@ -2643,7 +2642,7 @@ function exportCSV(month) {
 function renderRelatorio(c) {
   const now = new Date();
   const currentMonth = now.toISOString().slice(0,7);
-  const month = window.selectedRelatorioMonth || currentMonth;
+  const month = state.selectedRelatorioMonth || currentMonth;
   const monthRes = getReservations().filter(r => r.date && r.date.startsWith(month));
 
   const totalRes = monthRes.length;
