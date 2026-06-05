@@ -6,6 +6,9 @@ let isLoading = false;
 let isFormOpen = false;
 // Período selecionado na tela de Monitoramento. `null` = seguir o relógio (modo "ao vivo").
 let selectedMonitorPeriod = null;
+// Verdadeiro quando o usuário voltou do link de recuperação de senha do e-mail.
+// Usado para mostrar a tela de "nova senha" em vez de logar/entrar no app.
+let isRecoveryFlow = false;
 
 // ========== SUPABASE AUTH ==========
 /** Check if Supabase mode is active (dataSdk using Supabase vs Express API) */
@@ -121,8 +124,10 @@ const dataHandler = {
         console.error('Error parsing periods:', e);
       }
     }
-    // Auto-restore session from localStorage after data loads
-    if (!currentUser) {
+    // Auto-restore session from localStorage after data loads.
+    // No fluxo de recuperação de senha não fazemos auto-login: o usuário
+    // precisa ver a tela de nova senha primeiro.
+    if (!currentUser && !isRecoveryFlow) {
       if (loadSession()) {
         showMainApp();
         return;
@@ -236,13 +241,31 @@ async function initApp() {
   // Inicializar ícones Lucide na tela de login imediatamente
   lucide.createIcons();
 
+  // Detecta o retorno do link de recuperação de senha ANTES de restaurar a
+  // sessão. O link traz "type=recovery" no hash da URL; se não tratarmos aqui,
+  // o detectSessionInUrl criaria uma sessão válida e o usuário entraria direto
+  // no app em vez de redefinir a senha.
+  if (window.location.hash && window.location.hash.includes('type=recovery')) {
+    isRecoveryFlow = true;
+  }
+
   const r = await window.dataSdk.init(dataHandler);
   if (!r.isOk) { console.error('SDK init failed'); }
 
-  // Try to restore Supabase session after data is loaded
-  const supabaseSession = await tryRestoreSupabaseSession();
-  if (supabaseSession) {
-    showMainApp();
+  // Listener para o evento PASSWORD_RECOVERY do Supabase (Supabase mode).
+  if (isSupabaseMode()) {
+    setupPasswordRecoveryListener();
+  }
+
+  if (isRecoveryFlow) {
+    // Mostrar a tela de nova senha; não restaurar sessão nem entrar no app.
+    showResetPasswordForm();
+  } else {
+    // Try to restore Supabase session after data is loaded
+    const supabaseSession = await tryRestoreSupabaseSession();
+    if (supabaseSession) {
+      showMainApp();
+    }
   }
 
   // Check expiring reservations every 30 seconds
@@ -484,6 +507,92 @@ function showForgotPassword() {
 function hideForgotPassword() {
   document.getElementById('forgot-password-panel').classList.add('hidden');
   document.getElementById('forgot-message').classList.add('hidden');
+}
+
+
+// ========== REDEFINIR SENHA (retorno do link de recuperação) ==========
+// O Supabase não tem uma página própria de recuperação: o link do e-mail
+// valida o token e redireciona de volta para o app, disparando o evento
+// PASSWORD_RECOVERY. Aqui detectamos esse evento e mostramos a tela de
+// "nova senha", finalizando o fluxo com supabase.auth.updateUser().
+function setupPasswordRecoveryListener() {
+  const supabase = getSupabaseClient();
+  if (!supabase) return;
+  supabase.auth.onAuthStateChange((event) => {
+    if (event === 'PASSWORD_RECOVERY') {
+      isRecoveryFlow = true;
+      showResetPasswordForm();
+    }
+  });
+}
+
+function showResetPasswordForm() {
+  const loginScreen = document.getElementById('login-screen');
+  const mainApp = document.getElementById('main-app');
+  if (loginScreen) loginScreen.style.display = 'none';
+  if (mainApp) mainApp.style.display = 'none';
+
+  let panel = document.getElementById('reset-password-screen');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'reset-password-screen';
+    panel.className = 'h-full w-full flex items-center justify-center p-4';
+    panel.style.background = 'linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#0f172a 100%)';
+    panel.innerHTML = `
+      <div class="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl p-6 fade-in">
+        <h1 class="text-2xl font-bold text-white mb-1">Nova senha</h1>
+        <p class="text-slate-400 text-sm mb-4">Defina sua nova senha de acesso.</p>
+        <label class="block text-xs text-slate-400 mb-1">Nova senha</label>
+        <input id="reset-pass" type="password" placeholder="••••••••" class="w-full px-4 py-3 mb-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500">
+        <label class="block text-xs text-slate-400 mb-1">Confirmar nova senha</label>
+        <input id="reset-pass2" type="password" placeholder="••••••••" class="w-full px-4 py-3 mb-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500">
+        <div id="reset-message" class="text-xs hidden mb-2"></div>
+        <button id="reset-btn" onclick="submitNewPassword()" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition">Salvar nova senha</button>
+      </div>`;
+    document.getElementById('app').appendChild(panel);
+  }
+  panel.style.display = 'flex';
+}
+
+async function submitNewPassword() {
+  const p1 = document.getElementById('reset-pass').value;
+  const p2 = document.getElementById('reset-pass2').value;
+  const msg = document.getElementById('reset-message');
+  const show = (text, cls) => {
+    msg.textContent = text;
+    msg.className = 'text-xs mb-2 ' + cls;
+    msg.classList.remove('hidden');
+  };
+
+  if (!p1 || p1.length < 6) { show('A senha deve ter ao menos 6 caracteres.', 'text-red-400'); return; }
+  if (p1 !== p2) { show('As senhas não coincidem.', 'text-red-400'); return; }
+
+  const btn = document.getElementById('reset-btn');
+  btn.disabled = true;
+  btn.textContent = 'Salvando...';
+
+  try {
+    const supabase = getSupabaseClient();
+    const { error } = await supabase.auth.updateUser({ password: p1 });
+    if (error) {
+      show('Erro ao salvar: ' + error.message, 'text-red-400');
+      btn.disabled = false;
+      btn.textContent = 'Salvar nova senha';
+      return;
+    }
+    show('✅ Senha alterada! Redirecionando para o login...', 'text-emerald-400');
+    // Encerra a sessão de recuperação e volta para o login limpo (sem o hash).
+    await supabase.auth.signOut();
+    isRecoveryFlow = false;
+    setTimeout(() => {
+      window.location.replace(window.location.origin + window.location.pathname);
+    }, 1500);
+  } catch (e) {
+    console.error('Erro submitNewPassword:', e);
+    show('Erro ao alterar a senha. Tente novamente.', 'text-red-400');
+    btn.disabled = false;
+    btn.textContent = 'Salvar nova senha';
+  }
 }
 
 async function handleForgotPassword() {
