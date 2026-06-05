@@ -547,7 +547,7 @@ function showResetPasswordForm() {
         <label class="block text-xs text-slate-400 mb-1">Confirmar nova senha</label>
         <input id="reset-pass2" type="password" placeholder="••••••••" class="w-full px-4 py-3 mb-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500">
         <div id="reset-message" class="text-xs hidden mb-2"></div>
-        <button id="reset-btn" onclick="submitNewPassword()" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition">Salvar nova senha</button>
+        <button id="reset-btn" data-action="submit-new-password" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition">Salvar nova senha</button>
       </div>`;
     document.getElementById('app').appendChild(panel);
   }
@@ -647,7 +647,7 @@ function buildNav() {
     );
   }
   nav.innerHTML = links.map(l => `
-    <button onclick="navigate('${l.id}')" class="sidebar-link w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-300 ${currentView===l.id?'active':''}" data-nav="${l.id}">
+    <button data-action="navigate" data-view="${l.id}" class="sidebar-link w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-300 ${currentView===l.id?'active':''}" data-nav="${l.id}">
       <i data-lucide="${l.icon}" style="width:16px;height:16px"></i> ${l.label}
     </button>
   `).join('');
@@ -699,7 +699,7 @@ function renderReservar(c) {
       <p class="text-slate-400 text-sm mb-6">Selecione o carrinho, data e horários desejados</p>
 
 
-      ${carts.length === 0 ? `<div class="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400"><i data-lucide="inbox" style="width:40px;height:40px;margin:0 auto 12px;color:#475569"></i><p>Nenhum carrinho cadastrado ainda.</p>${isAdmin() ? `<button onclick="navigate('carrinhos')" class="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition">+ Cadastrar primeiro carrinho</button>` : '<p class="text-xs mt-1">Peça ao administrador para cadastrar os carrinhos.</p>'}</div>` : `
+      ${carts.length === 0 ? `<div class="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400"><i data-lucide="inbox" style="width:40px;height:40px;margin:0 auto 12px;color:#475569"></i><p>Nenhum carrinho cadastrado ainda.</p>${isAdmin() ? `<button data-action="navigate" data-view="carrinhos" class="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition">+ Cadastrar primeiro carrinho</button>` : '<p class="text-xs mt-1">Peça ao administrador para cadastrar os carrinhos.</p>'}</div>` : `
       <div class="grid gap-4 sm:grid-cols-2 mb-6">
         <div>
           <label class="block text-sm font-medium text-slate-300 mb-1">Carrinho</label>
@@ -738,7 +738,7 @@ function renderReservar(c) {
           </div>
         </div>
         <div id="device-grid" class="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 gap-2 mb-6"></div>
-        <button id="confirm-reservation-btn" onclick="confirmReservation()" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition" style="opacity:0.4;pointer-events:none">Confirmar Reserva</button>
+        <button id="confirm-reservation-btn" data-action="confirm-reservation" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition" style="opacity:0.4;pointer-events:none">Confirmar Reserva</button>
       </div>
       `}
     </div>
@@ -812,7 +812,7 @@ function updateDeviceGrid() {
 
     html += `
       <div class="device-card rounded-xl p-2 text-center border-2 ${bgColor} ${borderColor} ${clickable ? 'cursor-pointer' : 'cursor-not-allowed'}"
-           data-device="${i}" data-status="${status}" onclick="toggleDevice(this, ${i}, '${status}')">
+           data-device="${i}" data-status="${status}" data-action="toggle-device">
         <i data-lucide="${icon}" style="width:20px;height:20px;margin:0 auto;color:${status==='notregistered'?'#78909c':status==='reserved'?'#ef4444':'#3b82f6'}"></i>
         <div class="device-num-label text-xs mt-1 font-medium ${textColor}">#${i}</div>
         ${status === 'notregistered' ? `<div class="text-xs text-slate-500">não cadastrado</div>` : status === 'reserved' ? `<div class="text-xs text-red-300 truncate" title="${reservations.find(r=>parseInt(r.device_number)===i)?.reserved_by||''}">${(reservations.find(r=>parseInt(r.device_number)===i)?.reserved_by||'').split(' ')[0]}</div>` : ''}
@@ -1137,10 +1137,10 @@ function renderMinhas(c) {
               <p class="text-sm text-slate-400">${new Date(g.date+'T12:00:00').toLocaleDateString('pt-BR')} — ${g.type}</p>
             </div>
             <div class="flex gap-2">
-              <button onclick="showFinalizeModal('${g.records.map(r=>r.__backendId).join(',')}')" class="px-3 py-1 text-xs bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 rounded-lg transition flex items-center gap-1">
+              <button data-action="show-finalize-modal" data-ids="${g.records.map(r=>r.__backendId).join(',')}" class="px-3 py-1 text-xs bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 rounded-lg transition flex items-center gap-1">
                 <i data-lucide="check" style="width:12px;height:12px"></i> Finalizar
               </button>
-              <button onclick="cancelGroup('${g.records.map(r=>r.__backendId).join(',')}')" class="px-3 py-1 text-xs bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition">Cancelar</button>
+              <button data-action="cancel-group" data-ids="${g.records.map(r=>r.__backendId).join(',')}" class="px-3 py-1 text-xs bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition">Cancelar</button>
             </div>
           </div>
           <div class="text-xs text-slate-400 mb-1">Dispositivos: ${[...g.devices].sort((a,b)=>a-b).map(d=>'#'+d).join(', ')}</div>
@@ -1284,7 +1284,7 @@ function renderHorarios(c) {
                 <label class="block text-xs text-slate-400 mb-1">Horário ${idx + 1}</label>
                 <input type="text" value="${period}" data-idx="${idx}" class="period-input w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500">
               </div>
-              <button onclick="removePeriod(${idx})" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
+              <button data-action="remove-period" data-idx="${idx}" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
                 <i data-lucide="trash-2" style="width:16px;height:16px"></i>
               </button>
             </div>
@@ -1292,16 +1292,16 @@ function renderHorarios(c) {
         </div>
 
 
-        <button onclick="addNewPeriod()" class="w-full px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium rounded-lg transition mb-4 flex items-center justify-center gap-2">
+        <button data-action="add-new-period" class="w-full px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium rounded-lg transition mb-4 flex items-center justify-center gap-2">
           <i data-lucide="plus" style="width:16px;height:16px"></i> Adicionar Horário
         </button>
 
 
         <div class="border-t border-slate-700 pt-4 flex gap-2">
-          <button onclick="saveHorarios()" class="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition flex items-center justify-center gap-2">
+          <button data-action="save-horarios" class="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition flex items-center justify-center gap-2">
             <i data-lucide="save" style="width:16px;height:16px"></i> Salvar Alterações
           </button>
-          <button onclick="resetHorarios()" class="px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white font-semibold rounded-xl transition">
+          <button data-action="reset-horarios" class="px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white font-semibold rounded-xl transition">
             Resetar
           </button>
         </div>
@@ -1332,7 +1332,7 @@ function addNewPeriod() {
       <label class="block text-xs text-slate-400 mb-1">Horário ${newIdx + 1}</label>
       <input type="text" data-idx="${newIdx}" placeholder="Ex: Horário (HH:MM-HH:MM)" class="period-input w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500" autofocus>
     </div>
-    <button onclick="this.parentElement.remove()" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
+    <button data-action="remove-new-period" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
       <i data-lucide="trash-2" style="width:16px;height:16px"></i>
     </button>
   `;
@@ -1450,7 +1450,7 @@ function renderCarrinhos(c) {
           <h2 class="text-xl font-bold flex items-center gap-2"><i data-lucide="hard-drive" style="width:22px;height:22px;color:#3b82f6"></i> Carrinhos</h2>
           <p class="text-slate-400 text-sm">Gerencie os carrinhos e dispositivos</p>
         </div>
-        <button onclick="showCartForm()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition flex items-center gap-1">
+        <button data-action="show-cart-form" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition flex items-center gap-1">
           <i data-lucide="plus" style="width:16px;height:16px"></i> Novo Carrinho
         </button>
       </div>
@@ -1468,13 +1468,13 @@ function renderCarrinhos(c) {
                 <p class="text-sm text-slate-400">${ct.floor} — ${ct.device_type} (${cartDevices.length} dispositivos)</p>
               </div>
               <div class="flex gap-2">
-                <button onclick="showAddDeviceForm('${ct.__backendId}')" class="px-3 py-1 text-xs bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded-lg transition flex items-center gap-1">
+                <button data-action="show-add-device-form" data-id="${ct.__backendId}" class="px-3 py-1 text-xs bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded-lg transition flex items-center gap-1">
                   <i data-lucide="plus" style="width:12px;height:12px"></i> Adicionar Dispositivo
                 </button>
-                <button onclick="editCart('${ct.__backendId}')" class="p-2 text-amber-400 hover:bg-amber-500/20 rounded-lg transition" title="Editar carrinho">
+                <button data-action="edit-cart" data-id="${ct.__backendId}" class="p-2 text-amber-400 hover:bg-amber-500/20 rounded-lg transition" title="Editar carrinho">
                   <i data-lucide="pencil" style="width:16px;height:16px"></i>
                 </button>
-                <button onclick="confirmDeleteCart('${ct.__backendId}')" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
+                <button data-action="confirm-delete-cart" data-id="${ct.__backendId}" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
                   <i data-lucide="trash-2" style="width:16px;height:16px"></i>
                 </button>
               </div>
@@ -1498,10 +1498,10 @@ function renderCarrinhos(c) {
                   <span class="text-blue-400">${dev.device_brand}</span>
                   <span class="col-span-2 text-slate-300">${dev.device_type || '-'}</span>
                   <span class="text-right flex items-center justify-end gap-1">
-                    <button onclick="editDevice('${dev.__backendId}')" class="p-1 text-amber-400 hover:bg-amber-500/20 rounded transition" title="Editar dispositivo">
+                    <button data-action="edit-device" data-id="${dev.__backendId}" class="p-1 text-amber-400 hover:bg-amber-500/20 rounded transition" title="Editar dispositivo">
                       <i data-lucide="pencil" style="width:14px;height:14px"></i>
                     </button>
-                    <button onclick="confirmDeleteDevice('${dev.__backendId}')" class="p-1 text-red-400 hover:bg-red-500/20 rounded transition">
+                    <button data-action="confirm-delete-device" data-id="${dev.__backendId}" class="p-1 text-red-400 hover:bg-red-500/20 rounded transition">
                       <i data-lucide="trash-2" style="width:14px;height:14px"></i>
                     </button>
                   </span>
@@ -1547,8 +1547,8 @@ function editCart(id) {
         </div>
       </div>
       <div class="flex gap-2">
-        <button onclick="updateCart('${id}')" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar</button>
-        <button onclick="cancelEditCart('${id}')" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
+        <button data-action="update-cart" data-id="${id}" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar</button>
+        <button data-action="cancel-edit-cart" data-id="${id}" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
       </div>
     </div>
   `;
@@ -1622,8 +1622,8 @@ function editDevice(id) {
         <input id="edit-dev-model-${id}" value="${dev.device_type || ''}" class="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-xs text-white">
       </div>
       <div class="text-right flex items-center justify-end gap-1">
-        <button onclick="updateDevice('${id}')" class="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded transition font-medium">Salvar</button>
-        <button onclick="cancelEditDevice('${id}')" class="px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded transition">Cancelar</button>
+        <button data-action="update-device" data-id="${id}" class="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded transition font-medium">Salvar</button>
+        <button data-action="cancel-edit-device" data-id="${id}" class="px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded transition">Cancelar</button>
       </div>
     </div>
   `;
@@ -1704,8 +1704,8 @@ function showCartForm() {
         </div>
       </div>
       <div class="flex gap-2 mt-4">
-        <button onclick="saveCart()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar</button>
-        <button onclick="isFormOpen = false; document.getElementById('cart-form-area').innerHTML=''" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
+        <button data-action="save-cart" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar</button>
+        <button data-action="cancel-cart-form" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
       </div>
     </div>
   `;
@@ -1743,8 +1743,8 @@ function showAddDeviceForm(cartId) {
           <input id="new-dev-model-${cartId}" placeholder="Ex: V14" class="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-xs text-white">
         </div>
         <div class="flex items-end gap-2">
-          <button onclick="saveDevice('${cartId}')" class="flex-1 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded-lg transition font-medium">Adicionar</button>
-          <button onclick="document.getElementById('add-device-form-${cartId}').innerHTML=''" class="px-3 py-2 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded-lg transition">Cancelar</button>
+          <button data-action="save-device" data-id="${cartId}" class="flex-1 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded-lg transition font-medium">Adicionar</button>
+          <button data-action="cancel-add-device" data-id="${cartId}" class="px-3 py-2 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded-lg transition">Cancelar</button>
         </div>
       </div>
     </div>
@@ -1829,7 +1829,7 @@ function confirmDeleteCart(id) {
       <input id="delete-cart-input" type="text" placeholder="${ct.cart_name}"
         class="w-full px-3 py-2 mb-4 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-red-500/60">
       <div class="flex gap-3">
-        <button onclick="document.getElementById('delete-cart-modal').remove()"
+        <button data-action="close-modal" data-modal="delete-cart-modal"
           class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition">
           Cancelar
         </button>
@@ -1888,11 +1888,11 @@ function confirmDeleteDevice(id) {
       </div>
       <p class="text-sm text-slate-300 mb-5">Esta ação não pode ser desfeita.</p>
       <div class="flex gap-3">
-        <button onclick="document.getElementById('delete-device-modal').remove()"
+        <button data-action="close-modal" data-modal="delete-device-modal"
           class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition">
           Cancelar
         </button>
-        <button onclick="document.getElementById('delete-device-modal').remove(); deleteDevice('${id}')"
+        <button data-action="do-delete-device" data-id="${id}"
           class="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg transition">
           Excluir
         </button>
@@ -1944,7 +1944,7 @@ function renderUsuarios(c) {
           <h2 class="text-xl font-bold flex items-center gap-2"><i data-lucide="users" style="width:22px;height:22px;color:#3b82f6"></i> Usuários</h2>
           <p class="text-slate-400 text-sm">Gerencie usuários, perfis e contatos</p>
         </div>
-        <button onclick="showUserForm()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition flex items-center gap-1">
+        <button data-action="show-user-form" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition flex items-center gap-1">
           <i data-lucide="plus" style="width:16px;height:16px"></i> Novo
         </button>
       </div>
@@ -1964,10 +1964,10 @@ function renderUsuarios(c) {
             <span><span class="px-2 py-0.5 rounded-full text-xs ${roleColors[u.role] || 'bg-slate-700/20 text-slate-400'}">${roleLabels[u.role] || u.role}</span></span>
             <span><span class="px-2 py-0.5 rounded-full text-xs ${isActive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-500/20 text-slate-400'}">${isActive ? 'Ativo' : 'Inativo'}</span></span>
             <span class="text-right flex items-center justify-end gap-1">
-              <button onclick="editUser('${u.__backendId}')" class="p-2 text-amber-400 hover:bg-amber-500/20 rounded-lg transition" title="Editar usuário">
+              <button data-action="edit-user" data-id="${u.__backendId}" class="p-2 text-amber-400 hover:bg-amber-500/20 rounded-lg transition" title="Editar usuário">
                 <i data-lucide="pencil" style="width:16px;height:16px"></i>
               </button>
-              <button onclick="toggleUserStatus('${u.__backendId}', ${isActive})" class="p-2 ${isActive ? 'text-amber-400 hover:bg-amber-500/20' : 'text-emerald-400 hover:bg-emerald-500/20'} rounded-lg transition" title="${isActive ? 'Desativar' : 'Ativar'}">
+              <button data-action="toggle-user-status" data-id="${u.__backendId}" data-active="${isActive}" class="p-2 ${isActive ? 'text-amber-400 hover:bg-amber-500/20' : 'text-emerald-400 hover:bg-emerald-500/20'} rounded-lg transition" title="${isActive ? 'Desativar' : 'Ativar'}">
                 <i data-lucide="${isActive ? 'power-off' : 'power'}" style="width:16px;height:16px"></i>
               </button>
             </span>
@@ -2015,8 +2015,8 @@ function showUserForm() {
         </div>
       </div>
       <div class="flex gap-2 mt-4">
-        <button onclick="saveUser()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar</button>
-        <button onclick="document.getElementById('user-form-area').innerHTML=''" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
+        <button data-action="save-user" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar</button>
+        <button data-action="clear-user-form" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
       </div>
     </div>
   `;
@@ -2192,8 +2192,8 @@ function editUser(id) {
         </div>
       </div>
       <div class="flex gap-2 mt-4">
-        <button onclick="updateUser('${id}')" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar Alterações</button>
-        <button onclick="document.getElementById('user-form-area').innerHTML=''" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
+        <button data-action="update-user" data-id="${id}" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar Alterações</button>
+        <button data-action="clear-user-form" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
       </div>
     </div>
   `;
@@ -2342,7 +2342,7 @@ function renderMonitor(c) {
       : '<span class="mt-0.5 w-1.5 h-1.5"></span>';
 
     return `
-      <button onclick="setMonitorPeriodByIndex(${i})" class="${baseCls} ${cls}" title="${p}${count?' — '+count+' reserva(s)':''}">
+      <button data-action="set-monitor-period" data-index="${i}" class="${baseCls} ${cls}" title="${p}${count?' — '+count+' reserva(s)':''}">
         <span class="font-semibold text-xs leading-tight">${shortLabel(p)}</span>
         <span class="text-[10px] opacity-70 leading-tight">${timeRange(p)}</span>
         ${dot}
@@ -2371,7 +2371,7 @@ function renderMonitor(c) {
       <div class="bg-slate-900 border border-slate-800 rounded-2xl p-3 mb-6">
         <div class="flex items-center justify-between mb-2 px-1 flex-wrap gap-2">
           <span class="text-xs text-slate-400 font-medium">Mapa do dia — clique em uma aula para visualizar a ocupação</span>
-          ${!isLive && currentPeriod ? '<button onclick="monitorGoLive()" class="text-xs bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 px-3 py-1 rounded-lg flex items-center gap-1 transition"><i data-lucide="radio" style="width:12px;height:12px"></i> Voltar para Agora</button>' : ''}
+          ${!isLive && currentPeriod ? '<button data-action="monitor-go-live" class="text-xs bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 px-3 py-1 rounded-lg flex items-center gap-1 transition"><i data-lucide="radio" style="width:12px;height:12px"></i> Voltar para Agora</button>' : ''}
         </div>
         <div class="flex items-stretch gap-1.5 overflow-x-auto pb-1">
           ${timelineHtml}
@@ -2416,7 +2416,7 @@ function renderMonitor(c) {
           <div class="grid grid-cols-8 sm:grid-cols-10 gap-1">
             ${Array.from({length:40},(_,i)=>i+1).map(n => {
               const res = cartRes.find(r=>parseInt(r.device_number)===n);
-              return `<button onclick="showDeviceSchedule('${ct.cart_name}', ${n})" class="rounded-lg p-1 text-center text-xs cursor-pointer transition ${res?'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30':'bg-blue-500/10 text-blue-400/60 border border-slate-800 hover:bg-blue-500/20 hover:text-blue-300'}" title="Ver agenda — ${ct.device_type} #${n}">${n}</button>`;
+              return `<button data-action="show-device-schedule" data-cart="${ct.cart_name}" data-device="${n}" class="rounded-lg p-1 text-center text-xs cursor-pointer transition ${res?'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30':'bg-blue-500/10 text-blue-400/60 border border-slate-800 hover:bg-blue-500/20 hover:text-blue-300'}" title="Ver agenda — ${ct.device_type} #${n}">${n}</button>`;
             }).join('')}
           </div>
           ${cartRes.length > 0 ? `
@@ -2492,14 +2492,14 @@ function showDeviceSchedule(cartName, deviceNum) {
   modal.id = 'device-schedule-modal';
   modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
   modal.innerHTML = `
-    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeDeviceModal()"></div>
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" data-action="close-device-modal"></div>
     <div class="relative bg-slate-900 border border-slate-700 rounded-2xl p-5 w-full max-w-sm shadow-2xl">
       <div class="flex items-center justify-between mb-4">
         <div>
           <h3 class="font-bold text-white">Computador #${deviceNum}</h3>
           <p class="text-xs text-slate-400">${cartName} — agenda do dia</p>
         </div>
-        <button onclick="closeDeviceModal()" class="text-slate-400 hover:text-white transition">
+        <button data-action="close-device-modal" class="text-slate-400 hover:text-white transition">
           <i data-lucide="x" style="width:18px;height:18px"></i>
         </button>
       </div>
@@ -2550,7 +2550,7 @@ function renderGerenciar(c) {
           <p class="text-xs text-slate-400">${new Date(g.date+'T12:00:00').toLocaleDateString('pt-BR')} — ${g.cart} ${g.floor} — ${[...g.devices].sort().map(d=>'#'+d).join(', ')}</p>
           <p class="text-xs text-slate-500">${[...g.periods].join(', ')}</p>
         </div>
-        <button onclick="adminCancelReservation('${g.ids.join(',')}')"
+        <button data-action="admin-cancel-reservation" data-ids="${g.ids.join(',')}"
           class="ml-3 px-3 py-1.5 text-xs bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition flex-shrink-0">
           Cancelar
         </button>
@@ -2686,7 +2686,7 @@ function renderRelatorio(c) {
               return `<option value="${m}" ${m===month?'selected':''}>${label}</option>`;
             }).join('')}
           </select>
-          <button onclick="exportCSV('${month}')"
+          <button data-action="export-csv" data-month="${month}"
             class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-xl transition flex items-center gap-2">
             <i data-lucide="download" style="width:16px;height:16px"></i> Exportar CSV
           </button>
@@ -2764,6 +2764,55 @@ function closeDeviceModal() {
   if (modal) modal.remove();
 }
 
+
+// ========== EVENT DELEGATION ==========
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const { action, id, ids, view, idx, index, cart, device, modal, month, active } = btn.dataset;
+  const map = {
+    'navigate':                 () => navigate(view),
+    'confirm-reservation':      () => confirmReservation(),
+    'toggle-device':            () => toggleDevice(btn, parseInt(btn.dataset.device), btn.dataset.status),
+    'show-finalize-modal':      () => showFinalizeModal(ids),
+    'cancel-group':             () => cancelGroup(ids),
+    'remove-period':            () => removePeriod(parseInt(idx)),
+    'remove-new-period':        () => btn.parentElement.remove(),
+    'add-new-period':           () => addNewPeriod(),
+    'save-horarios':            () => saveHorarios(),
+    'reset-horarios':           () => resetHorarios(),
+    'show-cart-form':           () => showCartForm(),
+    'show-add-device-form':     () => showAddDeviceForm(id),
+    'edit-cart':                () => editCart(id),
+    'confirm-delete-cart':      () => confirmDeleteCart(id),
+    'edit-device':              () => editDevice(id),
+    'confirm-delete-device':    () => confirmDeleteDevice(id),
+    'do-delete-device':         () => { document.getElementById('delete-device-modal')?.remove(); deleteDevice(id); },
+    'update-cart':              () => updateCart(id),
+    'cancel-edit-cart':         () => cancelEditCart(id),
+    'update-device':            () => updateDevice(id),
+    'cancel-edit-device':       () => cancelEditDevice(id),
+    'save-cart':                () => saveCart(),
+    'cancel-cart-form':         () => { isFormOpen = false; document.getElementById('cart-form-area').innerHTML = ''; },
+    'save-device':              () => saveDevice(id),
+    'cancel-add-device':        () => { document.getElementById(`add-device-form-${id}`).innerHTML = ''; },
+    'show-user-form':           () => showUserForm(),
+    'edit-user':                () => editUser(id),
+    'toggle-user-status':       () => toggleUserStatus(id, active === 'true'),
+    'save-user':                () => saveUser(),
+    'clear-user-form':          () => { document.getElementById('user-form-area').innerHTML = ''; },
+    'update-user':              () => updateUser(id),
+    'set-monitor-period':       () => setMonitorPeriodByIndex(parseInt(index)),
+    'monitor-go-live':          () => monitorGoLive(),
+    'show-device-schedule':     () => showDeviceSchedule(cart, parseInt(device)),
+    'close-device-modal':       () => closeDeviceModal(),
+    'admin-cancel-reservation': () => adminCancelReservation(ids),
+    'export-csv':               () => exportCSV(month),
+    'submit-new-password':      () => submitNewPassword(),
+    'close-modal':              () => { const m = document.getElementById(modal); if (m) m.remove(); },
+  };
+  if (map[action]) map[action]();
+});
 
 // Init icons
 document.addEventListener('DOMContentLoaded', () => { lucide.createIcons(); });
