@@ -1,6 +1,6 @@
 // ========== ADMIN: CARRINHOS ==========
 import { state } from './state.js';
-import { getCarts, getDevices, toast } from './helpers.js';
+import { getCarts, getDevices, toast, sdkCall } from './helpers.js';
 import { navigate } from './routing.js';
 
 export function renderCarrinhos(c) {
@@ -135,18 +135,11 @@ export async function updateCart(id) {
   const cartRecord = state.allData.find(d => d.__backendId === id);
   if (!cartRecord) return;
 
-  const r = await window.dataSdk.update({
-    ...cartRecord,
-    cart_name: novoNome,
-    floor: novoAndar,
-    device_type: novoTipo
-  });
-  if (r.isOk) {
-    toast('Carrinho atualizado!');
-    navigate('carrinhos');
-  } else {
-    toast('Erro ao atualizar.', 'error');
-  }
+  const r = await sdkCall(
+    () => window.dataSdk.update({ ...cartRecord, cart_name: novoNome, floor: novoAndar, device_type: novoTipo }),
+    'Carrinho atualizado!', 'Erro ao atualizar.'
+  );
+  if (r.isOk) navigate('carrinhos');
 }
 
 export function editDevice(id) {
@@ -217,19 +210,11 @@ export async function updateDevice(id) {
   const deviceRecord = state.allData.find(d => d.__backendId === id);
   if (!deviceRecord) return;
 
-  const r = await window.dataSdk.update({
-    ...deviceRecord,
-    device_number: parseInt(novaPos),
-    device_serial: novoSerial,
-    device_brand: novaMarca,
-    device_type: novoModelo
-  });
-  if (r.isOk) {
-    toast('Dispositivo atualizado!');
-    navigate('carrinhos');
-  } else {
-    toast('Erro ao atualizar.', 'error');
-  }
+  const r = await sdkCall(
+    () => window.dataSdk.update({ ...deviceRecord, device_number: parseInt(novaPos), device_serial: novoSerial, device_brand: novaMarca, device_type: novoModelo }),
+    'Dispositivo atualizado!', 'Erro ao atualizar.'
+  );
+  if (r.isOk) navigate('carrinhos');
 }
 
 export function showCartForm() {
@@ -310,13 +295,15 @@ export async function saveCart() {
   if (!name || !floor) { toast('Preencha todos os campos.', 'error'); return; }
   if (state.allData.length >= 999) { toast('Limite de registros atingido.', 'error'); return; }
 
-  const r = await window.dataSdk.create({
-    type: 'cart', cart_name: name, floor: floor, device_type: dtype,
-    name: '', email: '', password: '', role: '', device_number: 0, device_brand: '', device_serial: '', cart_id: '',
-    reserved_by: '', reserved_email: '', date: '', period: '', status: '', created_at: new Date().toISOString()
-  });
-  if (r.isOk) { toast('Carrinho cadastrado!'); state.isFormOpen = false; document.getElementById('cart-form-area').innerHTML = ''; }
-  else toast('Erro ao salvar.', 'error');
+  const r = await sdkCall(
+    () => window.dataSdk.create({
+      type: 'cart', cart_name: name, floor: floor, device_type: dtype,
+      name: '', email: '', password: '', role: '', device_number: 0, device_brand: '', device_serial: '', cart_id: '',
+      reserved_by: '', reserved_email: '', date: '', period: '', status: '', created_at: new Date().toISOString()
+    }),
+    'Carrinho cadastrado!', 'Erro ao salvar.'
+  );
+  if (r.isOk) { state.isFormOpen = false; document.getElementById('cart-form-area').innerHTML = ''; }
 }
 
 export async function saveDevice(cartId) {
@@ -335,13 +322,15 @@ export async function saveDevice(cartId) {
   const existingDevice = getDevices().find(d => String(d.cart_id) === String(cartId) && parseInt(d.device_number) === parseInt(deviceNumber));
   if (existingDevice) { toast(`Posição #${deviceNumber} já está cadastrada neste carrinho.`, 'error'); return; }
 
-  const r = await window.dataSdk.create({
-    type: 'device', cart_id: cartId, device_number: deviceNumber, device_serial: serial, device_brand: brand, device_type: model,
-    name: '', email: '', password: '', role: '', cart_name: '', floor: '',
-    reserved_by: '', reserved_email: '', date: '', period: '', status: '', created_at: new Date().toISOString()
-  });
-  if (r.isOk) { toast('Dispositivo adicionado na posição #' + deviceNumber + '!'); document.getElementById(`add-device-form-${cartId}`).innerHTML = ''; }
-  else toast('Erro ao salvar.', 'error');
+  const r = await sdkCall(
+    () => window.dataSdk.create({
+      type: 'device', cart_id: cartId, device_number: deviceNumber, device_serial: serial, device_brand: brand, device_type: model,
+      name: '', email: '', password: '', role: '', cart_name: '', floor: '',
+      reserved_by: '', reserved_email: '', date: '', period: '', status: '', created_at: new Date().toISOString()
+    }),
+    `Dispositivo adicionado na posição #${deviceNumber}!`, 'Erro ao salvar.'
+  );
+  if (r.isOk) document.getElementById(`add-device-form-${cartId}`).innerHTML = '';
 }
 
 export function confirmDeleteCart(id) {
@@ -398,11 +387,7 @@ export function confirmDeleteCart(id) {
 
 export async function deleteCart(id) {
   const rec = state.allData.find(d => d.__backendId === id);
-  if (rec) {
-    const result = await window.dataSdk.delete(rec);
-    if (result.isOk) { toast('Carrinho removido.'); }
-    else { toast('❌ Erro ao remover carrinho.', 'error'); }
-  }
+  if (rec) await sdkCall(() => window.dataSdk.delete(rec), 'Carrinho removido.', '❌ Erro ao remover carrinho.');
 }
 
 export function confirmDeleteDevice(id) {
@@ -444,9 +429,5 @@ export function confirmDeleteDevice(id) {
 
 export async function deleteDevice(id) {
   const rec = state.allData.find(d => d.__backendId === id);
-  if (rec) {
-    const result = await window.dataSdk.delete(rec);
-    if (result.isOk) { toast('Dispositivo removido.'); }
-    else { toast('❌ Erro ao remover dispositivo.', 'error'); }
-  }
+  if (rec) await sdkCall(() => window.dataSdk.delete(rec), 'Dispositivo removido.', '❌ Erro ao remover dispositivo.');
 }

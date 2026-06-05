@@ -1,6 +1,6 @@
 // ========== ADMIN: USUARIOS ==========
 import { state } from './state.js';
-import { getUsers, toast } from './helpers.js';
+import { getUsers, toast, sdkCall } from './helpers.js';
 import { navigate } from './routing.js';
 import { isSupabaseMode } from './auth.js';
 
@@ -190,11 +190,7 @@ export async function saveUser() {
 
 export async function deleteUser(id) {
   const rec = state.allData.find(d => d.__backendId === id);
-  if (rec) {
-    const result = await window.dataSdk.delete(rec);
-    if (result.isOk) { toast('Usuário removido permanentemente.'); }
-    else { toast('❌ Erro ao remover usuário.', 'error'); }
-  }
+  if (rec) await sdkCall(() => window.dataSdk.delete(rec), 'Usuário removido permanentemente.', '❌ Erro ao remover usuário.');
 }
 
 export async function toggleUserStatus(id, isCurrentlyActive) {
@@ -204,14 +200,11 @@ export async function toggleUserStatus(id, isCurrentlyActive) {
   const newStatus = isCurrentlyActive ? 'inativo' : 'ativo';
 
   const updatedUser = { ...user, user_status: newStatus };
-  const r = await window.dataSdk.update(updatedUser);
+  const r = await sdkCall(() => window.dataSdk.update(updatedUser), null, 'Erro ao atualizar status.');
   if (r.isOk) {
     const msg = newStatus === 'ativo' ? 'Usuário reativado!' : 'Usuário desativado! (histórico preservado)';
     toast(msg);
     navigate('usuarios');
-  } else {
-    console.error('Erro toggleUserStatus:', r.error);
-    toast('Erro ao atualizar status.', 'error');
   }
 }
 
@@ -301,12 +294,8 @@ export async function updateUser(id) {
     updatedUser.password = pass;
   }
 
-  const r = await window.dataSdk.update(updatedUser);
-  if (!r.isOk) {
-    console.error('Erro updateUser:', r.error);
-    toast('Erro ao atualizar.', 'error');
-    return;
-  }
+  const r = await sdkCall(() => window.dataSdk.update(updatedUser), null, 'Erro ao atualizar.');
+  if (!r.isOk) return;
 
   if (pass && isSupabaseMode()) {
     toast('⚠️ Para alterar senhas, use a opção "Esqueci minha senha" na tela de login.', 'warning');

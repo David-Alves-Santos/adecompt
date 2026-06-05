@@ -1,6 +1,6 @@
 // ========== ADMIN: HORÁRIOS ==========
 import { state } from './state.js';
-import { toast } from './helpers.js';
+import { toast, sdkCall } from './helpers.js';
 import { navigate } from './routing.js';
 
 export function renderHorarios(c) {
@@ -104,39 +104,30 @@ export async function saveHorarios() {
   const existingConfig = state.allData.find(d => d.config_key === 'school_periods');
 
   if (existingConfig) {
-    const result = await window.dataSdk.update({
-      ...existingConfig,
-      periods_json: JSON.stringify(newPeriods)
-    });
+    const result = await sdkCall(
+      () => window.dataSdk.update({ ...existingConfig, periods_json: JSON.stringify(newPeriods) }),
+      null, 'Erro ao salvar horários.'
+    );
     state.isLoading = false;
-    if (result.isOk) {
-      state.PERIODS = newPeriods;
-      toast('Horários atualizados com sucesso!');
-    } else {
-      toast('Erro ao salvar horários.', 'error');
-    }
+    if (result.isOk) { state.PERIODS = newPeriods; toast('Horários atualizados com sucesso!'); }
   } else {
     if (state.allData.length >= 999) {
       state.isLoading = false;
       toast('Limite de registros atingido.', 'error');
       return;
     }
-    const result = await window.dataSdk.create({
-      type: 'config',
-      config_key: 'school_periods',
-      periods_json: JSON.stringify(newPeriods),
-      name: '', email: '', password: '', role: '', floor: '', cart_name: '',
-      device_type: '', device_number: 0, device_brand: '', device_serial: '',
-      cart_id: '', reserved_by: '', reserved_email: '', date: '',
-      period: '', status: '', created_at: new Date().toISOString()
-    });
+    const result = await sdkCall(
+      () => window.dataSdk.create({
+        type: 'config', config_key: 'school_periods', periods_json: JSON.stringify(newPeriods),
+        name: '', email: '', password: '', role: '', floor: '', cart_name: '',
+        device_type: '', device_number: 0, device_brand: '', device_serial: '',
+        cart_id: '', reserved_by: '', reserved_email: '', date: '',
+        period: '', status: '', created_at: new Date().toISOString()
+      }),
+      null, 'Erro ao salvar horários.'
+    );
     state.isLoading = false;
-    if (result.isOk) {
-      state.PERIODS = newPeriods;
-      toast('Horários salvos com sucesso!');
-    } else {
-      toast('Erro ao salvar horários.', 'error');
-    }
+    if (result.isOk) { state.PERIODS = newPeriods; toast('Horários salvos com sucesso!'); }
   }
 }
 
@@ -159,7 +150,7 @@ export async function resetHorarios() {
   const existingConfig = state.allData.find(d => d.config_key === 'school_periods');
 
   if (existingConfig) {
-    await window.dataSdk.delete(existingConfig);
+    await sdkCall(() => window.dataSdk.delete(existingConfig), null, 'Erro ao resetar horários.');
   }
 
   state.PERIODS = defaultPeriods;

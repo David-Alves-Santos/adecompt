@@ -44,6 +44,23 @@ export function checkExpiringReservations() {
   });
 }
 
+export async function sdkCall(fn, successMsg = null, errorMsg = '❌ Erro na operação.') {
+  try {
+    const r = await fn();
+    if (r && r.isOk === false) {
+      if (r.error) console.error('[sdkCall]', r.error);
+      toast(errorMsg, 'error');
+      return { isOk: false };
+    }
+    if (successMsg) toast(successMsg);
+    return r ?? { isOk: true };
+  } catch (err) {
+    console.error('[sdkCall]', err);
+    toast(errorMsg, 'error');
+    return { isOk: false };
+  }
+}
+
 export async function sendExpirationNotification(user, reservation) {
   const updatedRes = { ...reservation, notification_sent: 'true' };
   await window.dataSdk.update(updatedRes);

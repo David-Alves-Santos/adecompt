@@ -88,8 +88,10 @@ export async function adminCancelReservation(ids) {
   for (const id of arr) {
     const rec = state.allData.find(d => d.__backendId === id);
     if (rec) {
-      const result = await window.dataSdk.delete(rec);
-      if (!result.isOk) hasError = true;
+      try {
+        const result = await window.dataSdk.delete(rec);
+        if (!result.isOk) hasError = true;
+      } catch { hasError = true; }
     }
   }
   window.dataSdk.endBatch();
