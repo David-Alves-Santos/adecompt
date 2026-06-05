@@ -1807,12 +1807,53 @@ async function saveDevice(cartId) {
 function confirmDeleteCart(id) {
   const ct = getCarts().find(c => c.__backendId === id);
   if (!ct) return;
-  const name = prompt(`Digite o nome do carrinho "${ct.cart_name}" para confirmar a exclusão:`);
-  if (name && name.trim() === ct.cart_name) {
+  const existing = document.getElementById('delete-cart-modal');
+  if (existing) existing.remove();
+  const modal = document.createElement('div');
+  modal.id = 'delete-cart-modal';
+  modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+  modal.innerHTML = `
+    <div class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+    <div class="relative bg-slate-900 border border-red-500/40 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0">
+          <i data-lucide="triangle-alert" style="width:20px;height:20px;color:#ef4444"></i>
+        </div>
+        <div>
+          <h3 class="font-bold text-white">Excluir carrinho?</h3>
+          <p class="text-xs text-slate-400">${ct.cart_name}</p>
+        </div>
+      </div>
+      <p class="text-sm text-slate-300 mb-1">Todos os <strong>dispositivos</strong> e <strong>reservas</strong> deste carrinho serão apagados permanentemente.</p>
+      <p class="text-sm text-slate-400 mb-4">Para confirmar, digite o nome do carrinho:</p>
+      <input id="delete-cart-input" type="text" placeholder="${ct.cart_name}"
+        class="w-full px-3 py-2 mb-4 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-red-500/60">
+      <div class="flex gap-3">
+        <button onclick="document.getElementById('delete-cart-modal').remove()"
+          class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition">
+          Cancelar
+        </button>
+        <button id="delete-cart-confirm-btn" disabled
+          class="flex-1 px-4 py-2 bg-red-600 text-white font-medium rounded-lg transition opacity-40 cursor-not-allowed">
+          Excluir
+        </button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  lucide.createIcons();
+  const input = document.getElementById('delete-cart-input');
+  const confirmBtn = document.getElementById('delete-cart-confirm-btn');
+  input.focus();
+  input.addEventListener('input', () => {
+    const match = input.value.trim() === ct.cart_name;
+    confirmBtn.disabled = !match;
+    confirmBtn.className = `flex-1 px-4 py-2 bg-red-600 text-white font-medium rounded-lg transition ${match ? 'hover:bg-red-700 opacity-100 cursor-pointer' : 'opacity-40 cursor-not-allowed'}`;
+  });
+  confirmBtn.addEventListener('click', () => {
+    modal.remove();
     deleteCart(id);
-  } else if (name !== null) {
-    toast('❌ Nome incorreto. Exclusão cancelada.', 'error');
-  }
+  });
 }
 
 async function deleteCart(id) {
