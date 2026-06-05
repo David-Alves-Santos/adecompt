@@ -1,14 +1,29 @@
 // ========== STATE ==========
-let allData = [];
-let currentUser = null;
-let currentView = 'reservar';
-let isLoading = false;
-let isFormOpen = false;
-// Período selecionado na tela de Monitoramento. `null` = seguir o relógio (modo "ao vivo").
-let selectedMonitorPeriod = null;
-// Verdadeiro quando o usuário voltou do link de recuperação de senha do e-mail.
-// Usado para mostrar a tela de "nova senha" em vez de logar/entrar no app.
-let isRecoveryFlow = false;
+const state = {
+  allData: [],
+  currentUser: null,
+  currentView: 'reservar',
+  isLoading: false,
+  isFormOpen: false,
+  selectedMonitorPeriod: null, // null = seguir o relógio (modo "ao vivo")
+  isRecoveryFlow: false,       // true quando o usuário retornou do link de recuperação de senha
+  selectedDevices: new Set(),
+  selectedRelatorioMonth: null,
+  PERIODS: [
+    '1º Horário (07:00-07:50)',
+    '2º Horário (07:50-08:40)',
+    '3º Horário (08:40-09:30)',
+    'Intervalo (09:30-09:50)',
+    '4º Horário (09:50-10:40)',
+    '5º Horário (10:40-11:30)',
+    '6º Horário (13:00-13:50)',
+    '7º Horário (13:50-14:40)',
+    '8º Horário (14:40-15:30)',
+    'Intervalo (15:30-15:50)',
+    '9º Horário (15:50-16:40)',
+    '10º Horário (16:40-17:30)'
+  ],
+};
 
 // ========== SUPABASE AUTH ==========
 /** Check if Supabase mode is active (dataSdk using Supabase vs Express API) */
@@ -18,7 +33,7 @@ function isSupabaseMode() {
 
 /**
  * Attempt to restore an existing Supabase session on page load.
- * Returns true if a valid session was found and currentUser was set.
+ * Returns true if a valid session was found and state.currentUser was set.
  */
 async function tryRestoreSupabaseSession() {
   if (!isSupabaseMode()) return false;
@@ -35,16 +50,16 @@ async function tryRestoreSupabaseSession() {
       .single();
 
     if (profile) {
-      currentUser = {
+      state.currentUser = {
         name: profile.name,
         email: profile.email,
         role: profile.role,
         __backendId: profile.id
       };
-      // Sync profile into allData if not already there
-      const existing = allData.find(d => d.__backendId === profile.id && d.type === 'user');
+      // Sync profile into state.allData if not already there
+      const existing = state.allData.find(d => d.__backendId === profile.id && d.type === 'user');
       if (!existing) {
-        allData.push({
+        state.allData.push({
           ...profile,
           __backendId: profile.id,
           type: 'user',
@@ -63,20 +78,6 @@ async function tryRestoreSupabaseSession() {
 }
 
 
-let PERIODS = [
-  '1º Horário (07:00-07:50)',
-  '2º Horário (07:50-08:40)',
-  '3º Horário (08:40-09:30)',
-  'Intervalo (09:30-09:50)',
-  '4º Horário (09:50-10:40)',
-  '5º Horário (10:40-11:30)',
-  '6º Horário (13:00-13:50)',
-  '7º Horário (13:50-14:40)',
-  '8º Horário (14:40-15:30)',
-  'Intervalo (15:30-15:50)',
-  '9º Horário (15:50-16:40)',
-  '10º Horário (16:40-17:30)'
-];
 
 
 const defaultConfig = {
@@ -91,10 +92,10 @@ const defaultConfig = {
 
 
 // ========== HELPERS ==========
-function getUsers() { return allData.filter(d => d.type === 'user'); }
-function getCarts() { return allData.filter(d => d.type === 'cart'); }
-function getDevices() { return allData.filter(d => d.type === 'device'); }
-function getReservations() { return allData.filter(d => d.type === 'reservation'); }
+function getUsers() { return state.allData.filter(d => d.type === 'user'); }
+function getCarts() { return state.allData.filter(d => d.type === 'cart'); }
+function getDevices() { return state.allData.filter(d => d.type === 'device'); }
+function getReservations() { return state.allData.filter(d => d.type === 'reservation'); }
 
 
 function toast(msg, type='success') {
@@ -114,12 +115,12 @@ function todayStr() { return new Date().toISOString().split('T')[0]; }
 // ========== DATA SDK ==========
 const dataHandler = {
   onDataChanged(data) {
-    allData = data;
+    state.allData = data;
     // Load periods from config if exists
     const configRecord = data.find(d => d.config_key === 'school_periods');
     if (configRecord && configRecord.periods_json) {
       try {
-        PERIODS = JSON.parse(configRecord.periods_json);
+        state.state.PERIODS = JSON.parse(configRecord.periods_json);
       } catch (e) {
         console.error('Error parsing periods:', e);
       }
@@ -127,13 +128,13 @@ const dataHandler = {
     // Auto-restore session from localStorage after data loads.
     // No fluxo de recuperação de senha não fazemos auto-login: o usuário
     // precisa ver a tela de nova senha primeiro.
-    if (!currentUser && !isRecoveryFlow) {
+    if (!state.currentUser && !state.isRecoveryFlow) {
       if (loadSession()) {
         showMainApp();
         return;
       }
     }
-    if (currentUser && !isFormOpen) renderCurrentView();
+    if (state.currentUser && !state.isFormOpen) renderCurrentView();
     // Check for expiring reservations
     checkExpiringReservations();
   }
@@ -201,8 +202,8 @@ Acesse o app para gerenciar suas reservas!
 
 // ========== SESSÃO PERSISTENTE ==========
 function saveSession() {
-  if (currentUser) {
-    localStorage.setItem('adelaide_session', JSON.stringify(currentUser));
+  if (state.currentUser) {
+    localStorage.setItem('adelaide_session', JSON.stringify(state.currentUser));
   }
 }
 
@@ -212,12 +213,12 @@ function loadSession() {
     if (saved) {
       const user = JSON.parse(saved);
       if (user.email === 'admin@escola.com') {
-        currentUser = user;
+        state.currentUser = user;
         return true;
       }
       const found = getUsers().find(u => u.email === user.email && u.user_status !== 'inativo');
       if (found) {
-        currentUser = { name: found.name, email: found.email, role: found.role, __backendId: found.__backendId };
+        state.currentUser = { name: found.name, email: found.email, role: found.role, __backendId: found.__backendId };
         return true;
       }
     }
@@ -246,7 +247,7 @@ async function initApp() {
   // o detectSessionInUrl criaria uma sessão válida e o usuário entraria direto
   // no app em vez de redefinir a senha.
   if (window.location.hash && window.location.hash.includes('type=recovery')) {
-    isRecoveryFlow = true;
+    state.isRecoveryFlow = true;
   }
 
   const r = await window.dataSdk.init(dataHandler);
@@ -257,7 +258,7 @@ async function initApp() {
     setupPasswordRecoveryListener();
   }
 
-  if (isRecoveryFlow) {
+  if (state.isRecoveryFlow) {
     // Mostrar a tela de nova senha; não restaurar sessão nem entrar no app.
     showResetPasswordForm();
   } else {
@@ -386,7 +387,7 @@ async function handleLogin() {
               password: 'admin123'
             });
             if (!retryError && retryData) {
-              currentUser = { name: 'Administrador', email: 'admin@escola.com', role: 'admin', __backendId: retryData.user.id };
+              state.currentUser = { name: 'Administrador', email: 'admin@escola.com', role: 'admin', __backendId: retryData.user.id };
               saveSession();
               showMainApp();
               return;
@@ -435,7 +436,7 @@ async function handleLogin() {
       return;
     }
 
-    currentUser = { name: profile.name, email: profile.email, role: profile.role, __backendId: profile.id };
+    state.currentUser = { name: profile.name, email: profile.email, role: profile.role, __backendId: profile.id };
     saveSession();
     showMainApp();
     return;
@@ -445,7 +446,7 @@ async function handleLogin() {
 
   // Default admin
   if (email === 'admin@escola.com' && pass === 'admin123') {
-    currentUser = { name:'Administrador', email:'admin@escola.com', role:'admin' };
+    state.currentUser = { name:'Administrador', email:'admin@escola.com', role:'admin' };
     saveSession();
     showMainApp();
     return;
@@ -462,22 +463,22 @@ async function handleLogin() {
     return;
   }
 
-  currentUser = { name: user.name, email: user.email, role: user.role, __backendId: user.__backendId };
+  state.currentUser = { name: user.name, email: user.email, role: user.role, __backendId: user.__backendId };
   saveSession();
   showMainApp();
 }
 
 
 function isAdmin() {
-  return currentUser && currentUser.role === 'admin';
+  return state.currentUser && state.currentUser.role === 'admin';
 }
 
 
 function showMainApp() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('main-app').style.display = 'block';
-  document.getElementById('user-name').textContent = currentUser.name;
-  document.getElementById('user-role').textContent = currentUser.role === 'admin' ? 'Administrador' : 'Professor';
+  document.getElementById('user-name').textContent = state.currentUser.name;
+  document.getElementById('user-role').textContent = state.currentUser.role === 'admin' ? 'Administrador' : 'Professor';
   buildNav();
   renderCurrentView();
   lucide.createIcons();
@@ -485,8 +486,8 @@ function showMainApp() {
 
 
 function logout() {
-  currentUser = null;
-  currentView = 'reservar';
+  state.currentUser = null;
+  state.currentView = 'reservar';
   clearSession();
   document.getElementById('main-app').style.display = 'none';
   document.getElementById('login-screen').style.display = 'flex';
@@ -520,7 +521,7 @@ function setupPasswordRecoveryListener() {
   if (!supabase) return;
   supabase.auth.onAuthStateChange((event) => {
     if (event === 'PASSWORD_RECOVERY') {
-      isRecoveryFlow = true;
+      state.isRecoveryFlow = true;
       showResetPasswordForm();
     }
   });
@@ -547,7 +548,7 @@ function showResetPasswordForm() {
         <label class="block text-xs text-slate-400 mb-1">Confirmar nova senha</label>
         <input id="reset-pass2" type="password" placeholder="••••••••" class="w-full px-4 py-3 mb-3 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500">
         <div id="reset-message" class="text-xs hidden mb-2"></div>
-        <button id="reset-btn" onclick="submitNewPassword()" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition">Salvar nova senha</button>
+        <button id="reset-btn" data-action="submit-new-password" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition">Salvar nova senha</button>
       </div>`;
     document.getElementById('app').appendChild(panel);
   }
@@ -583,7 +584,7 @@ async function submitNewPassword() {
     show('✅ Senha alterada! Redirecionando para o login...', 'text-emerald-400');
     // Encerra a sessão de recuperação e volta para o login limpo (sem o hash).
     await supabase.auth.signOut();
-    isRecoveryFlow = false;
+    state.isRecoveryFlow = false;
     setTimeout(() => {
       window.location.replace(window.location.origin + window.location.pathname);
     }, 1500);
@@ -631,7 +632,7 @@ async function handleForgotPassword() {
 // ========== NAVIGATION ==========
 function buildNav() {
   const nav = document.getElementById('nav-links');
-  const isAdmin = currentUser.role === 'admin';
+  const isAdmin = state.currentUser.role === 'admin';
   let links = [
     { id:'reservar', icon:'calendar-plus', label:'Reservar' },
     { id:'minhas', icon:'bookmark', label:'Minhas Reservas' }
@@ -647,7 +648,7 @@ function buildNav() {
     );
   }
   nav.innerHTML = links.map(l => `
-    <button onclick="navigate('${l.id}')" class="sidebar-link w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-300 ${currentView===l.id?'active':''}" data-nav="${l.id}">
+    <button data-action="navigate" data-view="${l.id}" class="sidebar-link w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-300 ${state.currentView===l.id?'active':''}" data-nav="${l.id}">
       <i data-lucide="${l.icon}" style="width:16px;height:16px"></i> ${l.label}
     </button>
   `).join('');
@@ -658,8 +659,8 @@ function buildNav() {
 function navigate(view) {
   // Ao trocar de aba, sempre voltamos o Monitoramento ao modo "ao vivo".
   // Assim o usuário não fica preso a um período antigo se sair e voltar à tela.
-  selectedMonitorPeriod = null;
-  currentView = view;
+  state.selectedMonitorPeriod = null;
+  state.currentView = view;
   buildNav();
   renderCurrentView();
 }
@@ -667,7 +668,7 @@ function navigate(view) {
 
 function renderCurrentView() {
   const c = document.getElementById('main-content');
-  switch(currentView) {
+  switch(state.currentView) {
     case 'reservar': renderReservar(c); break;
     case 'minhas': renderMinhas(c); break;
     case 'horarios': renderHorarios(c); break;
@@ -699,7 +700,7 @@ function renderReservar(c) {
       <p class="text-slate-400 text-sm mb-6">Selecione o carrinho, data e horários desejados</p>
 
 
-      ${carts.length === 0 ? `<div class="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400"><i data-lucide="inbox" style="width:40px;height:40px;margin:0 auto 12px;color:#475569"></i><p>Nenhum carrinho cadastrado ainda.</p>${isAdmin() ? `<button onclick="navigate('carrinhos')" class="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition">+ Cadastrar primeiro carrinho</button>` : '<p class="text-xs mt-1">Peça ao administrador para cadastrar os carrinhos.</p>'}</div>` : `
+      ${carts.length === 0 ? `<div class="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400"><i data-lucide="inbox" style="width:40px;height:40px;margin:0 auto 12px;color:#475569"></i><p>Nenhum carrinho cadastrado ainda.</p>${isAdmin() ? `<button data-action="navigate" data-view="carrinhos" class="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition">+ Cadastrar primeiro carrinho</button>` : '<p class="text-xs mt-1">Peça ao administrador para cadastrar os carrinhos.</p>'}</div>` : `
       <div class="grid gap-4 sm:grid-cols-2 mb-6">
         <div>
           <label class="block text-sm font-medium text-slate-300 mb-1">Carrinho</label>
@@ -718,7 +719,7 @@ function renderReservar(c) {
       <div>
         <label class="block text-sm font-medium text-slate-300 mb-2">Horários</label>
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 mb-6" id="period-checks">
-          ${PERIODS.map((p,i) => `
+          ${state.PERIODS.map((p,i) => `
             <label class="flex items-center gap-2 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg cursor-pointer hover:border-blue-500 transition text-xs">
               <input type="checkbox" value="${p}" class="period-cb accent-blue-500" onchange="updateDeviceGrid()"> <span>${p}</span>
             </label>
@@ -738,15 +739,12 @@ function renderReservar(c) {
           </div>
         </div>
         <div id="device-grid" class="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 gap-2 mb-6"></div>
-        <button id="confirm-reservation-btn" onclick="confirmReservation()" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition" style="opacity:0.4;pointer-events:none">Confirmar Reserva</button>
+        <button id="confirm-reservation-btn" data-action="confirm-reservation" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition" style="opacity:0.4;pointer-events:none">Confirmar Reserva</button>
       </div>
       `}
     </div>
   `;
 }
-
-
-let selectedDevices = new Set();
 
 
 function updateDeviceGrid() {
@@ -762,7 +760,7 @@ function updateDeviceGrid() {
     return;
   }
   section.classList.remove('hidden');
-  selectedDevices.clear();
+  state.selectedDevices.clear();
 
 
   const cart = getCarts().find(ct => ct.__backendId === cartId);
@@ -812,7 +810,7 @@ function updateDeviceGrid() {
 
     html += `
       <div class="device-card rounded-xl p-2 text-center border-2 ${bgColor} ${borderColor} ${clickable ? 'cursor-pointer' : 'cursor-not-allowed'}"
-           data-device="${i}" data-status="${status}" onclick="toggleDevice(this, ${i}, '${status}')">
+           data-device="${i}" data-status="${status}" data-action="toggle-device">
         <i data-lucide="${icon}" style="width:20px;height:20px;margin:0 auto;color:${status==='notregistered'?'#78909c':status==='reserved'?'#ef4444':'#3b82f6'}"></i>
         <div class="device-num-label text-xs mt-1 font-medium ${textColor}">#${i}</div>
         ${status === 'notregistered' ? `<div class="text-xs text-slate-500">não cadastrado</div>` : status === 'reserved' ? `<div class="text-xs text-red-300 truncate" title="${reservations.find(r=>parseInt(r.device_number)===i)?.reserved_by||''}">${(reservations.find(r=>parseInt(r.device_number)===i)?.reserved_by||'').split(' ')[0]}</div>` : ''}
@@ -830,8 +828,8 @@ function toggleDevice(el, num, status) {
   const currentStatus = el.getAttribute('data-status');
   if (currentStatus !== 'available') return;
 
-  if (selectedDevices.has(num)) {
-    selectedDevices.delete(num);
+  if (state.selectedDevices.has(num)) {
+    state.selectedDevices.delete(num);
     el.className = 'device-card rounded-xl p-2 text-center border-2 bg-blue-500/20 border-blue-500/50 hover:border-blue-400 cursor-pointer';
     // lucide substitui <i> por <svg>, então buscamos os dois
     const icon = el.querySelector('i, svg');
@@ -842,7 +840,7 @@ function toggleDevice(el, num, status) {
       textEl.classList.add('text-blue-400');
     }
   } else {
-    selectedDevices.add(num);
+    state.selectedDevices.add(num);
     el.className = 'device-card rounded-xl p-2 text-center border-2 bg-emerald-500/20 border-emerald-500 cursor-pointer';
     const icon = el.querySelector('i, svg');
     if (icon) icon.style.color = '#10b981';
@@ -859,7 +857,7 @@ function toggleDevice(el, num, status) {
 function updateConfirmBtn() {
   const btn = document.getElementById('confirm-reservation-btn');
   if (btn) {
-    const shouldEnable = selectedDevices.size > 0;
+    const shouldEnable = state.selectedDevices.size > 0;
     // Nunca usar btn.disabled — bloqueia o onclick mesmo com pointerEvents 'auto'
     if (shouldEnable) {
       btn.style.opacity = '1';
@@ -881,10 +879,10 @@ function updateConfirmBtn() {
 
 
 function showConfirmationModal(cartId, date, periods, cart) {
-  if (!cart || periods.length === 0 || selectedDevices.size === 0) return;
+  if (!cart || periods.length === 0 || state.selectedDevices.size === 0) return;
 
 
-  const totalReservations = periods.length * selectedDevices.size;
+  const totalReservations = periods.length * state.selectedDevices.size;
   const dateObj = new Date(date + 'T12:00:00');
   const formattedDate = dateObj.toLocaleDateString('pt-BR');
 
@@ -912,7 +910,7 @@ function showConfirmationModal(cartId, date, periods, cart) {
         </div>
         <div class="flex justify-between text-sm">
           <span class="text-slate-400">Dispositivos:</span>
-          <span class="text-blue-400 font-medium">${[...selectedDevices].sort((a,b)=>a-b).map(d=>'#'+d).join(', ')}</span>
+          <span class="text-blue-400 font-medium">${[...state.selectedDevices].sort((a,b)=>a-b).map(d=>'#'+d).join(', ')}</span>
         </div>
         <div class="flex justify-between text-sm">
           <span class="text-slate-400">Horários:</span>
@@ -950,33 +948,33 @@ function showConfirmationModal(cartId, date, periods, cart) {
   cancelBtn.onclick = (e) => {
     e.stopPropagation();
     modal.remove();
-    isLoading = false; // liberar o botão ao cancelar (RACE-1)
+    state.isLoading = false; // liberar o botão ao cancelar (RACE-1)
   };
 
   confirmBtn.onclick = (e) => {
     e.stopPropagation();
     modal.remove();
-    // isLoading já está true; proceedWithReservation vai gerenciá-lo daqui
+    // state.isLoading já está true; proceedWithReservation vai gerenciá-lo daqui
     proceedWithReservation(cartId, date, periods, cart);
   };
 
   modal.onclick = (e) => {
     if (e.target === modal) {
       modal.remove();
-      isLoading = false; // liberar ao fechar clicando fora (RACE-1)
+      state.isLoading = false; // liberar ao fechar clicando fora (RACE-1)
     }
   };
 }
 
 
 async function proceedWithReservation(cartId, date, periods, cart) {
-  // isLoading já foi setado como true em confirmReservation() antes de abrir o modal.
+  // state.isLoading já foi setado como true em confirmReservation() antes de abrir o modal.
   // Esta guarda cobre chamadas diretas eventuais.
-  if (!isLoading) isLoading = true;
+  if (!state.isLoading) state.isLoading = true;
 
 
-  if (!cart || periods.length === 0 || selectedDevices.size === 0) {
-    isLoading = false;
+  if (!cart || periods.length === 0 || state.selectedDevices.size === 0) {
+    state.isLoading = false;
     toast('Dados inválidos para criar reserva.', 'error');
     return;
   }
@@ -993,7 +991,7 @@ async function proceedWithReservation(cartId, date, periods, cart) {
   // Build the full list of reservation records
   const reservations = [];
   for (const period of periods) {
-    for (const devNum of selectedDevices) {
+    for (const devNum of state.selectedDevices) {
       reservations.push({
         type: 'reservation',
         cart_name: cart.cart_name || '',
@@ -1003,8 +1001,8 @@ async function proceedWithReservation(cartId, date, periods, cart) {
         device_number: String(devNum),
         device_brand: '',
         device_serial: '',
-        reserved_by: currentUser.name || '',
-        reserved_email: currentUser.email || '',
+        reserved_by: state.currentUser.name || '',
+        reserved_email: state.currentUser.email || '',
         date: date || '',
         period: period || '',
         status: 'active',
@@ -1035,7 +1033,7 @@ async function proceedWithReservation(cartId, date, periods, cart) {
   // Re-enable re-renders with a single update
   window.dataSdk.endBatch();
 
-  isLoading = false;
+  state.isLoading = false;
   
   if (btn) {
     btn.style.pointerEvents = 'auto';
@@ -1049,7 +1047,7 @@ async function proceedWithReservation(cartId, date, periods, cart) {
     } else {
       toast(`⚠️ ${successCount} reserva(s) criada(s), mas ${errorCount} falharam. Verifique conflitos.`, 'warning');
     }
-    selectedDevices.clear();
+    state.selectedDevices.clear();
 
     // Reset form
     const cartIdEl = document.getElementById('sel-cart');
@@ -1070,7 +1068,7 @@ async function proceedWithReservation(cartId, date, periods, cart) {
 
 
 function confirmReservation() {
-  if (isLoading) return;
+  if (state.isLoading) return;
   
   const cartIdEl = document.getElementById('sel-cart');
   const dateEl = document.getElementById('sel-date');
@@ -1092,19 +1090,19 @@ function confirmReservation() {
   if (!cart) { toast('Carrinho não encontrado.', 'error'); return; }
   if (!date) { toast('Selecione uma data.', 'error'); return; }
   if (periods.length === 0) { toast('Selecione pelo menos um horário.', 'error'); return; }
-  if (selectedDevices.size === 0) { toast('Selecione pelo menos um dispositivo.', 'error'); return; }
+  if (state.selectedDevices.size === 0) { toast('Selecione pelo menos um dispositivo.', 'error'); return; }
 
 
   // Check limit
-  const totalNew = periods.length * selectedDevices.size;
-  if (allData.length + totalNew > 999) {
+  const totalNew = periods.length * state.selectedDevices.size;
+  if (state.allData.length + totalNew > 999) {
     toast('Limite de registros atingido. Exclua reservas antigas.', 'error');
     return;
   }
 
 
   // Bloquear novos cliques enquanto o modal está aberto (RACE-1)
-  isLoading = true;
+  state.isLoading = true;
 
   // Show confirmation modal
   showConfirmationModal(cartId, date, periods, cart);
@@ -1113,7 +1111,7 @@ function confirmReservation() {
 
 // ========== MINHAS RESERVAS ==========
 function renderMinhas(c) {
-  const mine = getReservations().filter(r => r.reserved_email === currentUser.email && r.status === 'active');
+  const mine = getReservations().filter(r => r.reserved_email === state.currentUser.email && r.status === 'active');
   const grouped = {};
   mine.forEach(r => {
     const key = `${r.date}|${r.cart_name}`;
@@ -1137,10 +1135,10 @@ function renderMinhas(c) {
               <p class="text-sm text-slate-400">${new Date(g.date+'T12:00:00').toLocaleDateString('pt-BR')} — ${g.type}</p>
             </div>
             <div class="flex gap-2">
-              <button onclick="showFinalizeModal('${g.records.map(r=>r.__backendId).join(',')}')" class="px-3 py-1 text-xs bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 rounded-lg transition flex items-center gap-1">
+              <button data-action="show-finalize-modal" data-ids="${g.records.map(r=>r.__backendId).join(',')}" class="px-3 py-1 text-xs bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 rounded-lg transition flex items-center gap-1">
                 <i data-lucide="check" style="width:12px;height:12px"></i> Finalizar
               </button>
-              <button onclick="cancelGroup('${g.records.map(r=>r.__backendId).join(',')}')" class="px-3 py-1 text-xs bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition">Cancelar</button>
+              <button data-action="cancel-group" data-ids="${g.records.map(r=>r.__backendId).join(',')}" class="px-3 py-1 text-xs bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition">Cancelar</button>
             </div>
           </div>
           <div class="text-xs text-slate-400 mb-1">Dispositivos: ${[...g.devices].sort((a,b)=>a-b).map(d=>'#'+d).join(', ')}</div>
@@ -1153,20 +1151,20 @@ function renderMinhas(c) {
 
 
 async function cancelGroup(ids) {
-  if (isLoading) return;
-  isLoading = true;
+  if (state.isLoading) return;
+  state.isLoading = true;
   const arr = ids.split(',');
   window.dataSdk.beginBatch();
   let hasError = false;
   for (const id of arr) {
-    const rec = allData.find(d => d.__backendId === id);
+    const rec = state.allData.find(d => d.__backendId === id);
     if (rec) {
       const result = await window.dataSdk.delete(rec);
       if (!result.isOk) hasError = true;
     }
   }
   window.dataSdk.endBatch();
-  isLoading = false;
+  state.isLoading = false;
   if (hasError) {
     toast('⚠️ Erro ao cancelar uma ou mais reservas.', 'error');
   } else {
@@ -1176,10 +1174,10 @@ async function cancelGroup(ids) {
 
 
 function showFinalizeModal(ids) {
-  if (isLoading) return;
+  if (state.isLoading) return;
   
   const arr = ids.split(',');
-  const records = arr.map(id => allData.find(d => d.__backendId === id)).filter(r => r);
+  const records = arr.map(id => state.allData.find(d => d.__backendId === id)).filter(r => r);
   
   if (records.length === 0) {
     toast('Nenhuma reserva encontrada.', 'error');
@@ -1240,17 +1238,17 @@ function showFinalizeModal(ids) {
     e.stopPropagation();
     modal.remove();
     
-    isLoading = true;
+    state.isLoading = true;
     window.dataSdk.beginBatch();
     for (const id of arr) {
-      const rec = allData.find(d => d.__backendId === id);
+      const rec = state.allData.find(d => d.__backendId === id);
       if (rec) {
         const updated = { ...rec, status: 'completed' };
         await window.dataSdk.update(updated);
       }
     }
     window.dataSdk.endBatch();
-    isLoading = false;
+    state.isLoading = false;
     toast('✅ Reserva finalizada com sucesso!');
     navigate('minhas');
   };
@@ -1265,8 +1263,8 @@ function showFinalizeModal(ids) {
 
 // ========== ADMIN: HORÁRIOS ==========
 function renderHorarios(c) {
-  const configRecord = allData.find(d => d.config_key === 'school_periods');
-  const currentPeriods = configRecord && configRecord.periods_json ? JSON.parse(configRecord.periods_json) : PERIODS;
+  const configRecord = state.allData.find(d => d.config_key === 'school_periods');
+  const currentPeriods = configRecord && configRecord.periods_json ? JSON.parse(configRecord.periods_json) : state.PERIODS;
   
   c.innerHTML = `
     <div class="fade-in max-w-4xl mx-auto">
@@ -1284,7 +1282,7 @@ function renderHorarios(c) {
                 <label class="block text-xs text-slate-400 mb-1">Horário ${idx + 1}</label>
                 <input type="text" value="${period}" data-idx="${idx}" class="period-input w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500">
               </div>
-              <button onclick="removePeriod(${idx})" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
+              <button data-action="remove-period" data-idx="${idx}" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
                 <i data-lucide="trash-2" style="width:16px;height:16px"></i>
               </button>
             </div>
@@ -1292,16 +1290,16 @@ function renderHorarios(c) {
         </div>
 
 
-        <button onclick="addNewPeriod()" class="w-full px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium rounded-lg transition mb-4 flex items-center justify-center gap-2">
+        <button data-action="add-new-period" class="w-full px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium rounded-lg transition mb-4 flex items-center justify-center gap-2">
           <i data-lucide="plus" style="width:16px;height:16px"></i> Adicionar Horário
         </button>
 
 
         <div class="border-t border-slate-700 pt-4 flex gap-2">
-          <button onclick="saveHorarios()" class="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition flex items-center justify-center gap-2">
+          <button data-action="save-horarios" class="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition flex items-center justify-center gap-2">
             <i data-lucide="save" style="width:16px;height:16px"></i> Salvar Alterações
           </button>
-          <button onclick="resetHorarios()" class="px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white font-semibold rounded-xl transition">
+          <button data-action="reset-horarios" class="px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white font-semibold rounded-xl transition">
             Resetar
           </button>
         </div>
@@ -1332,7 +1330,7 @@ function addNewPeriod() {
       <label class="block text-xs text-slate-400 mb-1">Horário ${newIdx + 1}</label>
       <input type="text" data-idx="${newIdx}" placeholder="Ex: Horário (HH:MM-HH:MM)" class="period-input w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500" autofocus>
     </div>
-    <button onclick="this.parentElement.remove()" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
+    <button data-action="remove-new-period" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
       <i data-lucide="trash-2" style="width:16px;height:16px"></i>
     </button>
   `;
@@ -1350,15 +1348,15 @@ function removePeriod(idx) {
 
 async function saveHorarios() {
   // BUG-5: sem este guard, duplo clique dispara dois creates simultâneos antes do
-  // allData ser atualizado, gerando registros duplicados de school_periods.
-  if (isLoading) return;
-  isLoading = true;
+  // state.allData ser atualizado, gerando registros duplicados de school_periods.
+  if (state.isLoading) return;
+  state.isLoading = true;
 
   const inputs = document.querySelectorAll('.period-input');
   const newPeriods = Array.from(inputs).map(i => i.value.trim()).filter(v => v);
 
   if (newPeriods.length === 0) {
-    isLoading = false;
+    state.isLoading = false;
     toast('Adicione pelo menos um horário.', 'error');
     return;
   }
@@ -1368,28 +1366,28 @@ async function saveHorarios() {
   const periodFormat = /\(\d{2}:\d{2}-\d{2}:\d{2}\)/;
   const invalids = newPeriods.filter(p => !periodFormat.test(p));
   if (invalids.length > 0) {
-    isLoading = false;
+    state.isLoading = false;
     toast(`❌ Formato inválido: "${invalids[0]}". Use: Nome (HH:MM-HH:MM)`, 'error');
     return;
   }
 
-  const existingConfig = allData.find(d => d.config_key === 'school_periods');
+  const existingConfig = state.allData.find(d => d.config_key === 'school_periods');
 
   if (existingConfig) {
     const result = await window.dataSdk.update({
       ...existingConfig,
       periods_json: JSON.stringify(newPeriods)
     });
-    isLoading = false;
+    state.isLoading = false;
     if (result.isOk) {
-      PERIODS = newPeriods;
+      state.PERIODS = newPeriods;
       toast('Horários atualizados com sucesso!');
     } else {
       toast('Erro ao salvar horários.', 'error');
     }
   } else {
-    if (allData.length >= 999) {
-      isLoading = false;
+    if (state.allData.length >= 999) {
+      state.isLoading = false;
       toast('Limite de registros atingido.', 'error');
       return;
     }
@@ -1402,9 +1400,9 @@ async function saveHorarios() {
       cart_id: '', reserved_by: '', reserved_email: '', date: '',
       period: '', status: '', created_at: new Date().toISOString()
     });
-    isLoading = false;
+    state.isLoading = false;
     if (result.isOk) {
-      PERIODS = newPeriods;
+      state.PERIODS = newPeriods;
       toast('Horários salvos com sucesso!');
     } else {
       toast('Erro ao salvar horários.', 'error');
@@ -1430,13 +1428,13 @@ async function resetHorarios() {
   ];
 
 
-  const existingConfig = allData.find(d => d.config_key === 'school_periods');
+  const existingConfig = state.allData.find(d => d.config_key === 'school_periods');
   
   if (existingConfig) {
     await window.dataSdk.delete(existingConfig);
   }
   
-  PERIODS = defaultPeriods;
+  state.PERIODS = defaultPeriods;
   toast('Horários resetados para o padrão.');
   navigate('horarios');
 }
@@ -1450,7 +1448,7 @@ function renderCarrinhos(c) {
           <h2 class="text-xl font-bold flex items-center gap-2"><i data-lucide="hard-drive" style="width:22px;height:22px;color:#3b82f6"></i> Carrinhos</h2>
           <p class="text-slate-400 text-sm">Gerencie os carrinhos e dispositivos</p>
         </div>
-        <button onclick="showCartForm()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition flex items-center gap-1">
+        <button data-action="show-cart-form" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition flex items-center gap-1">
           <i data-lucide="plus" style="width:16px;height:16px"></i> Novo Carrinho
         </button>
       </div>
@@ -1468,13 +1466,13 @@ function renderCarrinhos(c) {
                 <p class="text-sm text-slate-400">${ct.floor} — ${ct.device_type} (${cartDevices.length} dispositivos)</p>
               </div>
               <div class="flex gap-2">
-                <button onclick="showAddDeviceForm('${ct.__backendId}')" class="px-3 py-1 text-xs bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded-lg transition flex items-center gap-1">
+                <button data-action="show-add-device-form" data-id="${ct.__backendId}" class="px-3 py-1 text-xs bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded-lg transition flex items-center gap-1">
                   <i data-lucide="plus" style="width:12px;height:12px"></i> Adicionar Dispositivo
                 </button>
-                <button onclick="editCart('${ct.__backendId}')" class="p-2 text-amber-400 hover:bg-amber-500/20 rounded-lg transition" title="Editar carrinho">
+                <button data-action="edit-cart" data-id="${ct.__backendId}" class="p-2 text-amber-400 hover:bg-amber-500/20 rounded-lg transition" title="Editar carrinho">
                   <i data-lucide="pencil" style="width:16px;height:16px"></i>
                 </button>
-                <button onclick="confirmDeleteCart('${ct.__backendId}')" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
+                <button data-action="confirm-delete-cart" data-id="${ct.__backendId}" class="p-2 text-red-400 hover:bg-red-500/20 rounded-lg transition">
                   <i data-lucide="trash-2" style="width:16px;height:16px"></i>
                 </button>
               </div>
@@ -1498,10 +1496,10 @@ function renderCarrinhos(c) {
                   <span class="text-blue-400">${dev.device_brand}</span>
                   <span class="col-span-2 text-slate-300">${dev.device_type || '-'}</span>
                   <span class="text-right flex items-center justify-end gap-1">
-                    <button onclick="editDevice('${dev.__backendId}')" class="p-1 text-amber-400 hover:bg-amber-500/20 rounded transition" title="Editar dispositivo">
+                    <button data-action="edit-device" data-id="${dev.__backendId}" class="p-1 text-amber-400 hover:bg-amber-500/20 rounded transition" title="Editar dispositivo">
                       <i data-lucide="pencil" style="width:14px;height:14px"></i>
                     </button>
-                    <button onclick="confirmDeleteDevice('${dev.__backendId}')" class="p-1 text-red-400 hover:bg-red-500/20 rounded transition">
+                    <button data-action="confirm-delete-device" data-id="${dev.__backendId}" class="p-1 text-red-400 hover:bg-red-500/20 rounded transition">
                       <i data-lucide="trash-2" style="width:14px;height:14px"></i>
                     </button>
                   </span>
@@ -1547,8 +1545,8 @@ function editCart(id) {
         </div>
       </div>
       <div class="flex gap-2">
-        <button onclick="updateCart('${id}')" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar</button>
-        <button onclick="cancelEditCart('${id}')" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
+        <button data-action="update-cart" data-id="${id}" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar</button>
+        <button data-action="cancel-edit-cart" data-id="${id}" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
       </div>
     </div>
   `;
@@ -1574,7 +1572,7 @@ async function updateCart(id) {
     return;
   }
 
-  const cartRecord = allData.find(d => d.__backendId === id);
+  const cartRecord = state.allData.find(d => d.__backendId === id);
   if (!cartRecord) return;
 
   const r = await window.dataSdk.update({
@@ -1622,8 +1620,8 @@ function editDevice(id) {
         <input id="edit-dev-model-${id}" value="${dev.device_type || ''}" class="w-full px-2 py-1 bg-slate-800 border border-slate-600 rounded text-xs text-white">
       </div>
       <div class="text-right flex items-center justify-end gap-1">
-        <button onclick="updateDevice('${id}')" class="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded transition font-medium">Salvar</button>
-        <button onclick="cancelEditDevice('${id}')" class="px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded transition">Cancelar</button>
+        <button data-action="update-device" data-id="${id}" class="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded transition font-medium">Salvar</button>
+        <button data-action="cancel-edit-device" data-id="${id}" class="px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded transition">Cancelar</button>
       </div>
     </div>
   `;
@@ -1661,7 +1659,7 @@ async function updateDevice(id) {
     return;
   }
 
-  const deviceRecord = allData.find(d => d.__backendId === id);
+  const deviceRecord = state.allData.find(d => d.__backendId === id);
   if (!deviceRecord) return;
 
   const r = await window.dataSdk.update({
@@ -1681,7 +1679,7 @@ async function updateDevice(id) {
 
 
 function showCartForm() {
-  isFormOpen = true;
+  state.isFormOpen = true;
   const area = document.getElementById('cart-form-area');
   area.innerHTML = `
     <div class="bg-slate-800 border border-slate-700 rounded-2xl p-5 mb-6 fade-in">
@@ -1704,8 +1702,8 @@ function showCartForm() {
         </div>
       </div>
       <div class="flex gap-2 mt-4">
-        <button onclick="saveCart()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar</button>
-        <button onclick="isFormOpen = false; document.getElementById('cart-form-area').innerHTML=''" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
+        <button data-action="save-cart" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar</button>
+        <button data-action="cancel-cart-form" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
       </div>
     </div>
   `;
@@ -1743,8 +1741,8 @@ function showAddDeviceForm(cartId) {
           <input id="new-dev-model-${cartId}" placeholder="Ex: V14" class="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-xs text-white">
         </div>
         <div class="flex items-end gap-2">
-          <button onclick="saveDevice('${cartId}')" class="flex-1 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded-lg transition font-medium">Adicionar</button>
-          <button onclick="document.getElementById('add-device-form-${cartId}').innerHTML=''" class="px-3 py-2 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded-lg transition">Cancelar</button>
+          <button data-action="save-device" data-id="${cartId}" class="flex-1 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded-lg transition font-medium">Adicionar</button>
+          <button data-action="cancel-add-device" data-id="${cartId}" class="px-3 py-2 bg-slate-600 hover:bg-slate-500 text-white text-xs rounded-lg transition">Cancelar</button>
         </div>
       </div>
     </div>
@@ -1758,7 +1756,7 @@ async function saveCart() {
   const floor = document.getElementById('new-cart-floor').value.trim();
   const dtype = document.getElementById('new-cart-type').value;
   if (!name || !floor) { toast('Preencha todos os campos.','error'); return; }
-  if (allData.length >= 999) { toast('Limite de registros atingido.','error'); return; }
+  if (state.allData.length >= 999) { toast('Limite de registros atingido.','error'); return; }
 
 
   const r = await window.dataSdk.create({
@@ -1766,7 +1764,7 @@ async function saveCart() {
     name:'', email:'', password:'', role:'', device_number:0, device_brand:'', device_serial:'', cart_id:'',
     reserved_by:'', reserved_email:'', date:'', period:'', status:'', created_at:new Date().toISOString()
   });
-  if (r.isOk) { toast('Carrinho cadastrado!'); isFormOpen = false; document.getElementById('cart-form-area').innerHTML=''; }
+  if (r.isOk) { toast('Carrinho cadastrado!'); state.isFormOpen = false; document.getElementById('cart-form-area').innerHTML=''; }
   else toast('Erro ao salvar.','error');
 }
 
@@ -1784,7 +1782,7 @@ async function saveDevice(cartId) {
   if (isNaN(parsedNum) || parsedNum < 1 || parsedNum > 40) {
     toast('❌ Número do dispositivo deve ser entre 1 e 40.', 'error'); return;
   }
-  if (allData.length >= 999) { toast('Limite de registros atingido.','error'); return; }
+  if (state.allData.length >= 999) { toast('Limite de registros atingido.','error'); return; }
 
 
   // Check if device number already exists in this cart
@@ -1829,7 +1827,7 @@ function confirmDeleteCart(id) {
       <input id="delete-cart-input" type="text" placeholder="${ct.cart_name}"
         class="w-full px-3 py-2 mb-4 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-red-500/60">
       <div class="flex gap-3">
-        <button onclick="document.getElementById('delete-cart-modal').remove()"
+        <button data-action="close-modal" data-modal="delete-cart-modal"
           class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition">
           Cancelar
         </button>
@@ -1857,7 +1855,7 @@ function confirmDeleteCart(id) {
 }
 
 async function deleteCart(id) {
-  const rec = allData.find(d => d.__backendId === id);
+  const rec = state.allData.find(d => d.__backendId === id);
   if (rec) {
     const result = await window.dataSdk.delete(rec);
     if (result.isOk) { toast('Carrinho removido.'); }
@@ -1888,11 +1886,11 @@ function confirmDeleteDevice(id) {
       </div>
       <p class="text-sm text-slate-300 mb-5">Esta ação não pode ser desfeita.</p>
       <div class="flex gap-3">
-        <button onclick="document.getElementById('delete-device-modal').remove()"
+        <button data-action="close-modal" data-modal="delete-device-modal"
           class="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition">
           Cancelar
         </button>
-        <button onclick="document.getElementById('delete-device-modal').remove(); deleteDevice('${id}')"
+        <button data-action="do-delete-device" data-id="${id}"
           class="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg transition">
           Excluir
         </button>
@@ -1905,7 +1903,7 @@ function confirmDeleteDevice(id) {
 
 
 async function deleteDevice(id) {
-  const rec = allData.find(d => d.__backendId === id);
+  const rec = state.allData.find(d => d.__backendId === id);
   if (rec) {
     const result = await window.dataSdk.delete(rec);
     // ERROR-1: checar resultado antes de confirmar sucesso
@@ -1944,7 +1942,7 @@ function renderUsuarios(c) {
           <h2 class="text-xl font-bold flex items-center gap-2"><i data-lucide="users" style="width:22px;height:22px;color:#3b82f6"></i> Usuários</h2>
           <p class="text-slate-400 text-sm">Gerencie usuários, perfis e contatos</p>
         </div>
-        <button onclick="showUserForm()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition flex items-center gap-1">
+        <button data-action="show-user-form" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition flex items-center gap-1">
           <i data-lucide="plus" style="width:16px;height:16px"></i> Novo
         </button>
       </div>
@@ -1964,10 +1962,10 @@ function renderUsuarios(c) {
             <span><span class="px-2 py-0.5 rounded-full text-xs ${roleColors[u.role] || 'bg-slate-700/20 text-slate-400'}">${roleLabels[u.role] || u.role}</span></span>
             <span><span class="px-2 py-0.5 rounded-full text-xs ${isActive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-500/20 text-slate-400'}">${isActive ? 'Ativo' : 'Inativo'}</span></span>
             <span class="text-right flex items-center justify-end gap-1">
-              <button onclick="editUser('${u.__backendId}')" class="p-2 text-amber-400 hover:bg-amber-500/20 rounded-lg transition" title="Editar usuário">
+              <button data-action="edit-user" data-id="${u.__backendId}" class="p-2 text-amber-400 hover:bg-amber-500/20 rounded-lg transition" title="Editar usuário">
                 <i data-lucide="pencil" style="width:16px;height:16px"></i>
               </button>
-              <button onclick="toggleUserStatus('${u.__backendId}', ${isActive})" class="p-2 ${isActive ? 'text-amber-400 hover:bg-amber-500/20' : 'text-emerald-400 hover:bg-emerald-500/20'} rounded-lg transition" title="${isActive ? 'Desativar' : 'Ativar'}">
+              <button data-action="toggle-user-status" data-id="${u.__backendId}" data-active="${isActive}" class="p-2 ${isActive ? 'text-amber-400 hover:bg-amber-500/20' : 'text-emerald-400 hover:bg-emerald-500/20'} rounded-lg transition" title="${isActive ? 'Desativar' : 'Ativar'}">
                 <i data-lucide="${isActive ? 'power-off' : 'power'}" style="width:16px;height:16px"></i>
               </button>
             </span>
@@ -2015,8 +2013,8 @@ function showUserForm() {
         </div>
       </div>
       <div class="flex gap-2 mt-4">
-        <button onclick="saveUser()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar</button>
-        <button onclick="document.getElementById('user-form-area').innerHTML=''" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
+        <button data-action="save-user" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar</button>
+        <button data-action="clear-user-form" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
       </div>
     </div>
   `;
@@ -2032,7 +2030,7 @@ async function saveUser() {
   const role = document.getElementById('new-user-role').value;
   if (!name||!email||!pass) { toast('Preencha todos os campos.','error'); return; }
   if (getUsers().find(u=>u.email===email)) { toast('E-mail já cadastrado.','error'); return; }
-  if (allData.length >= 999) { toast('Limite de registros atingido.','error'); return; }
+  if (state.allData.length >= 999) { toast('Limite de registros atingido.','error'); return; }
 
 
   // --- SUPABASE AUTH MODE ---
@@ -2116,7 +2114,7 @@ async function saveUser() {
 
 
 async function deleteUser(id) {
-  const rec = allData.find(d => d.__backendId === id);
+  const rec = state.allData.find(d => d.__backendId === id);
   if (rec) {
     const result = await window.dataSdk.delete(rec);
     // ERROR-1: checar resultado antes de confirmar sucesso
@@ -2133,7 +2131,7 @@ async function toggleUserStatus(id, isCurrentlyActive) {
   const newStatus = isCurrentlyActive ? 'inativo' : 'ativo';
 
   // Atualiza SEMPRE via dataSdk.update (Supabase e legacy). Assim o SDK detecta
-  // falha real de RLS via .select() e atualiza o cache local allData, fazendo a
+  // falha real de RLS via .select() e atualiza o cache local state.allData, fazendo a
   // lista de usuários refletir o novo status na hora.
   const updatedUser = { ...user, user_status: newStatus };
   const r = await window.dataSdk.update(updatedUser);
@@ -2192,8 +2190,8 @@ function editUser(id) {
         </div>
       </div>
       <div class="flex gap-2 mt-4">
-        <button onclick="updateUser('${id}')" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar Alterações</button>
-        <button onclick="document.getElementById('user-form-area').innerHTML=''" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
+        <button data-action="update-user" data-id="${id}" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition">Salvar Alterações</button>
+        <button data-action="clear-user-form" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg transition">Cancelar</button>
       </div>
     </div>
   `;
@@ -2231,7 +2229,7 @@ async function updateUser(id) {
 
   // Atualiza SEMPRE via dataSdk.update (Supabase e legacy). O SDK usa
   // .select().single(), então uma falha de RLS (0 linhas afetadas) vira erro
-  // real em vez de "sucesso" silencioso, e o cache local allData é atualizado
+  // real em vez de "sucesso" silencioso, e o cache local state.allData é atualizado
   // na hora — fazendo a UI refletir a mudança imediatamente.
   const updatedUser = {
     ...user,
@@ -2270,14 +2268,14 @@ function renderMonitor(c) {
   const todayRes = getReservations().filter(r => r.date === today && r.status === 'active');
 
 
-  // Figure out current period — derived dynamically from PERIODS strings
+  // Figure out current period — derived dynamically from state.PERIODS strings
   // so it stays correct when the school customizes its schedule via the
   // "Horários" admin panel. Each period label is expected to contain a
   // (HH:MM-HH:MM) range; periods without that pattern are skipped.
   const now = new Date();
   const mins = now.getHours() * 60 + now.getMinutes();
   let currentPeriod = '';
-  for (const period of PERIODS) {
+  for (const period of state.PERIODS) {
     const m = period.match(/\((\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\)/);
     if (!m) continue;
     const startMins = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
@@ -2291,8 +2289,8 @@ function renderMonitor(c) {
   // Período exibido — segue o relógio se o usuário não escolheu outro.
   // Se o período selecionado não existir mais (ex: admin removeu horários),
   // fazemos fallback gracioso para o período atual.
-  const validSelected = selectedMonitorPeriod && PERIODS.includes(selectedMonitorPeriod)
-    ? selectedMonitorPeriod : null;
+  const validSelected = state.selectedMonitorPeriod && state.PERIODS.includes(state.selectedMonitorPeriod)
+    ? state.selectedMonitorPeriod : null;
   const displayPeriod = validSelected || currentPeriod;
   const isLive = !!currentPeriod && displayPeriod === currentPeriod;
 
@@ -2312,7 +2310,7 @@ function renderMonitor(c) {
   todayRes.forEach(r => { resByPeriod[r.period] = (resByPeriod[r.period] || 0) + 1; });
 
   // Timeline horizontal — uma "chip" por período no dia.
-  const timelineHtml = PERIODS.map((p, i) => {
+  const timelineHtml = state.PERIODS.map((p, i) => {
     const isCurrent = p === currentPeriod;
     const isSelected = p === displayPeriod;
     const isInterval = p.startsWith('Intervalo');
@@ -2342,7 +2340,7 @@ function renderMonitor(c) {
       : '<span class="mt-0.5 w-1.5 h-1.5"></span>';
 
     return `
-      <button onclick="setMonitorPeriodByIndex(${i})" class="${baseCls} ${cls}" title="${p}${count?' — '+count+' reserva(s)':''}">
+      <button data-action="set-monitor-period" data-index="${i}" class="${baseCls} ${cls}" title="${p}${count?' — '+count+' reserva(s)':''}">
         <span class="font-semibold text-xs leading-tight">${shortLabel(p)}</span>
         <span class="text-[10px] opacity-70 leading-tight">${timeRange(p)}</span>
         ${dot}
@@ -2371,7 +2369,7 @@ function renderMonitor(c) {
       <div class="bg-slate-900 border border-slate-800 rounded-2xl p-3 mb-6">
         <div class="flex items-center justify-between mb-2 px-1 flex-wrap gap-2">
           <span class="text-xs text-slate-400 font-medium">Mapa do dia — clique em uma aula para visualizar a ocupação</span>
-          ${!isLive && currentPeriod ? '<button onclick="monitorGoLive()" class="text-xs bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 px-3 py-1 rounded-lg flex items-center gap-1 transition"><i data-lucide="radio" style="width:12px;height:12px"></i> Voltar para Agora</button>' : ''}
+          ${!isLive && currentPeriod ? '<button data-action="monitor-go-live" class="text-xs bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 px-3 py-1 rounded-lg flex items-center gap-1 transition"><i data-lucide="radio" style="width:12px;height:12px"></i> Voltar para Agora</button>' : ''}
         </div>
         <div class="flex items-stretch gap-1.5 overflow-x-auto pb-1">
           ${timelineHtml}
@@ -2416,7 +2414,7 @@ function renderMonitor(c) {
           <div class="grid grid-cols-8 sm:grid-cols-10 gap-1">
             ${Array.from({length:40},(_,i)=>i+1).map(n => {
               const res = cartRes.find(r=>parseInt(r.device_number)===n);
-              return `<button onclick="showDeviceSchedule('${ct.cart_name}', ${n})" class="rounded-lg p-1 text-center text-xs cursor-pointer transition ${res?'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30':'bg-blue-500/10 text-blue-400/60 border border-slate-800 hover:bg-blue-500/20 hover:text-blue-300'}" title="Ver agenda — ${ct.device_type} #${n}">${n}</button>`;
+              return `<button data-action="show-device-schedule" data-cart="${ct.cart_name}" data-device="${n}" class="rounded-lg p-1 text-center text-xs cursor-pointer transition ${res?'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30':'bg-blue-500/10 text-blue-400/60 border border-slate-800 hover:bg-blue-500/20 hover:text-blue-300'}" title="Ver agenda — ${ct.device_type} #${n}">${n}</button>`;
             }).join('')}
           </div>
           ${cartRes.length > 0 ? `
@@ -2439,18 +2437,18 @@ function renderMonitor(c) {
 }
 
 
-// Trocar o período exibido no Monitoramento. Usamos índice em PERIODS p/
+// Trocar o período exibido no Monitoramento. Usamos índice em state.PERIODS p/
 // evitar problemas de escape no `onclick` (os rótulos contêm parênteses).
 function setMonitorPeriodByIndex(i) {
-  const p = PERIODS[i];
+  const p = state.PERIODS[i];
   if (!p) return;
-  selectedMonitorPeriod = p;
+  state.selectedMonitorPeriod = p;
   renderCurrentView();
 }
 
 // Voltar ao modo "tempo real": volta a seguir o relógio.
 function monitorGoLive() {
-  selectedMonitorPeriod = null;
+  state.selectedMonitorPeriod = null;
   renderCurrentView();
 }
 
@@ -2469,7 +2467,7 @@ function showDeviceSchedule(cartName, deviceNum) {
   const resByPeriod = {};
   allRes.forEach(r => { resByPeriod[r.period] = r; });
 
-  const periodsHtml = PERIODS.map(p => {
+  const periodsHtml = state.PERIODS.map(p => {
     if (p.startsWith('Intervalo')) {
       return `<div class="text-[10px] text-slate-600 uppercase tracking-wider py-1 px-2">${p}</div>`;
     }
@@ -2492,14 +2490,14 @@ function showDeviceSchedule(cartName, deviceNum) {
   modal.id = 'device-schedule-modal';
   modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
   modal.innerHTML = `
-    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeDeviceModal()"></div>
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" data-action="close-device-modal"></div>
     <div class="relative bg-slate-900 border border-slate-700 rounded-2xl p-5 w-full max-w-sm shadow-2xl">
       <div class="flex items-center justify-between mb-4">
         <div>
           <h3 class="font-bold text-white">Computador #${deviceNum}</h3>
           <p class="text-xs text-slate-400">${cartName} — agenda do dia</p>
         </div>
-        <button onclick="closeDeviceModal()" class="text-slate-400 hover:text-white transition">
+        <button data-action="close-device-modal" class="text-slate-400 hover:text-white transition">
           <i data-lucide="x" style="width:18px;height:18px"></i>
         </button>
       </div>
@@ -2550,7 +2548,7 @@ function renderGerenciar(c) {
           <p class="text-xs text-slate-400">${new Date(g.date+'T12:00:00').toLocaleDateString('pt-BR')} — ${g.cart} ${g.floor} — ${[...g.devices].sort().map(d=>'#'+d).join(', ')}</p>
           <p class="text-xs text-slate-500">${[...g.periods].join(', ')}</p>
         </div>
-        <button onclick="adminCancelReservation('${g.ids.join(',')}')"
+        <button data-action="admin-cancel-reservation" data-ids="${g.ids.join(',')}"
           class="ml-3 px-3 py-1.5 text-xs bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition flex-shrink-0">
           Cancelar
         </button>
@@ -2600,29 +2598,27 @@ function renderGerenciar(c) {
 }
 
 async function adminCancelReservation(ids) {
-  if (isLoading) return;
-  isLoading = true;
+  if (state.isLoading) return;
+  state.isLoading = true;
   const arr = ids.split(',');
   window.dataSdk.beginBatch();
   let hasError = false;
   for (const id of arr) {
-    const rec = allData.find(d => d.__backendId === id);
+    const rec = state.allData.find(d => d.__backendId === id);
     if (rec) {
       const result = await window.dataSdk.delete(rec);
       if (!result.isOk) hasError = true;
     }
   }
   window.dataSdk.endBatch();
-  isLoading = false;
+  state.isLoading = false;
   if (hasError) toast('⚠️ Erro ao cancelar uma ou mais reservas.', 'warning');
   else toast('Reserva cancelada pelo administrador.');
 }
 
 // ========== ADMIN: RELATÓRIOS ==========
-window.selectedRelatorioMonth = null;
-
 function changeRelatorioMonth(month) {
-  window.selectedRelatorioMonth = month;
+  state.selectedRelatorioMonth = month;
   renderCurrentView();
 }
 
@@ -2646,7 +2642,7 @@ function exportCSV(month) {
 function renderRelatorio(c) {
   const now = new Date();
   const currentMonth = now.toISOString().slice(0,7);
-  const month = window.selectedRelatorioMonth || currentMonth;
+  const month = state.selectedRelatorioMonth || currentMonth;
   const monthRes = getReservations().filter(r => r.date && r.date.startsWith(month));
 
   const totalRes = monthRes.length;
@@ -2686,7 +2682,7 @@ function renderRelatorio(c) {
               return `<option value="${m}" ${m===month?'selected':''}>${label}</option>`;
             }).join('')}
           </select>
-          <button onclick="exportCSV('${month}')"
+          <button data-action="export-csv" data-month="${month}"
             class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-xl transition flex items-center gap-2">
             <i data-lucide="download" style="width:16px;height:16px"></i> Exportar CSV
           </button>
@@ -2764,6 +2760,55 @@ function closeDeviceModal() {
   if (modal) modal.remove();
 }
 
+
+// ========== EVENT DELEGATION ==========
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const { action, id, ids, view, idx, index, cart, device, modal, month, active } = btn.dataset;
+  const map = {
+    'navigate':                 () => navigate(view),
+    'confirm-reservation':      () => confirmReservation(),
+    'toggle-device':            () => toggleDevice(btn, parseInt(btn.dataset.device), btn.dataset.status),
+    'show-finalize-modal':      () => showFinalizeModal(ids),
+    'cancel-group':             () => cancelGroup(ids),
+    'remove-period':            () => removePeriod(parseInt(idx)),
+    'remove-new-period':        () => btn.parentElement.remove(),
+    'add-new-period':           () => addNewPeriod(),
+    'save-horarios':            () => saveHorarios(),
+    'reset-horarios':           () => resetHorarios(),
+    'show-cart-form':           () => showCartForm(),
+    'show-add-device-form':     () => showAddDeviceForm(id),
+    'edit-cart':                () => editCart(id),
+    'confirm-delete-cart':      () => confirmDeleteCart(id),
+    'edit-device':              () => editDevice(id),
+    'confirm-delete-device':    () => confirmDeleteDevice(id),
+    'do-delete-device':         () => { document.getElementById('delete-device-modal')?.remove(); deleteDevice(id); },
+    'update-cart':              () => updateCart(id),
+    'cancel-edit-cart':         () => cancelEditCart(id),
+    'update-device':            () => updateDevice(id),
+    'cancel-edit-device':       () => cancelEditDevice(id),
+    'save-cart':                () => saveCart(),
+    'cancel-cart-form':         () => { state.isFormOpen = false; document.getElementById('cart-form-area').innerHTML = ''; },
+    'save-device':              () => saveDevice(id),
+    'cancel-add-device':        () => { document.getElementById(`add-device-form-${id}`).innerHTML = ''; },
+    'show-user-form':           () => showUserForm(),
+    'edit-user':                () => editUser(id),
+    'toggle-user-status':       () => toggleUserStatus(id, active === 'true'),
+    'save-user':                () => saveUser(),
+    'clear-user-form':          () => { document.getElementById('user-form-area').innerHTML = ''; },
+    'update-user':              () => updateUser(id),
+    'set-monitor-period':       () => setMonitorPeriodByIndex(parseInt(index)),
+    'monitor-go-live':          () => monitorGoLive(),
+    'show-device-schedule':     () => showDeviceSchedule(cart, parseInt(device)),
+    'close-device-modal':       () => closeDeviceModal(),
+    'admin-cancel-reservation': () => adminCancelReservation(ids),
+    'export-csv':               () => exportCSV(month),
+    'submit-new-password':      () => submitNewPassword(),
+    'close-modal':              () => { const m = document.getElementById(modal); if (m) m.remove(); },
+  };
+  if (map[action]) map[action]();
+});
 
 // Init icons
 document.addEventListener('DOMContentLoaded', () => { lucide.createIcons(); });
