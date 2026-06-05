@@ -104,37 +104,31 @@ window.elementSdk.init({
 
 // initApp
 async function initApp() {
-  // Inicializar ícones Lucide na tela de login imediatamente
   window.lucide?.createIcons();
 
-  // Detecta o retorno do link de recuperação de senha ANTES de restaurar a
-  // sessão. O link traz "type=recovery" no hash da URL; se não tratarmos aqui,
-  // o detectSessionInUrl criaria uma sessão válida e o usuário entraria direto
-  // no app em vez de redefinir a senha.
   if (window.location.hash && window.location.hash.includes('type=recovery')) {
     state.isRecoveryFlow = true;
+  }
+
+  // Supabase mode: restaura sessão ANTES do dataSdk.init para evitar flash
+  // de login no reload. O app aparece imediatamente; os dados chegam depois
+  // via onDataChanged → renderCurrentView().
+  if (!state.isRecoveryFlow && isSupabaseMode()) {
+    const supabaseSession = await tryRestoreSupabaseSession();
+    if (supabaseSession) showMainApp();
   }
 
   const r = await window.dataSdk.init(dataHandler);
   if (!r.isOk) { console.error('SDK init failed'); }
 
-  // Listener para o evento PASSWORD_RECOVERY do Supabase (Supabase mode).
   if (isSupabaseMode()) {
     setupPasswordRecoveryListener();
   }
 
   if (state.isRecoveryFlow) {
-    // Mostrar a tela de nova senha; não restaurar sessão nem entrar no app.
     showResetPasswordForm();
-  } else {
-    // Try to restore Supabase session after data is loaded
-    const supabaseSession = await tryRestoreSupabaseSession();
-    if (supabaseSession) {
-      showMainApp();
-    }
   }
 
-  // Check expiring reservations every 30 seconds
   setInterval(checkExpiringReservations, 30000);
 }
 initApp();

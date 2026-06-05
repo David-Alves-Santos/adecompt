@@ -151,6 +151,7 @@ export async function handleLogin() {
               state.currentUser = { name: 'Administrador', email: 'admin@escola.com', role: 'admin', __backendId: retryData.user.id };
               saveSession();
               showMainApp();
+              window.dataSdk.fetchData?.();
               return;
             }
           } else {
@@ -196,6 +197,7 @@ export async function handleLogin() {
     state.currentUser = { name: profile.name, email: profile.email, role: profile.role, __backendId: profile.id };
     saveSession();
     showMainApp();
+    window.dataSdk.fetchData?.(); // Re-busca dados com sessão autenticada (RLS libera os registros)
     return;
   }
 
